@@ -3,8 +3,6 @@ using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
 using CounterStrikeSharp.API.Modules.Commands;
-using MediaToolkit;
-using MediaToolkit.Model;
 using VideoLibrary;
 
 namespace Sympho
@@ -59,7 +57,7 @@ namespace Sympho
                 var vid = await service.GetVideoAsync(url);
                 await File.WriteAllBytesAsync(inputPath, await vid.GetBytesAsync());
 
-                FFMpegCore.FFMpeg.ExtractAudio(inputPath, outputPath);
+                await Task.Run(() => FFMpegCore.FFMpeg.ExtractAudio(inputPath, outputPath));
 
                 File.Delete(inputPath);
             }

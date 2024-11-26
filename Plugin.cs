@@ -1,7 +1,6 @@
 ﻿using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
-using CounterStrikeSharp.API.Modules.UserMessages;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
 using Sympho.Models;
@@ -61,7 +60,7 @@ namespace Sympho
 
         void LoadConfig()
         {
-            var configPath = Path.Combine(Server.GameDirectory, "csgo\\addons\\counterstrikesharp\\configs\\Sympho\\sounds.json");
+            var configPath = Path.Combine(Server.GameDirectory, "csgo/addons/counterstrikesharp/configs/Sympho/sounds.json");
 
             if(!File.Exists(configPath))
             {
