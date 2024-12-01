@@ -14,9 +14,4 @@
     <PackageReference Include="YoutubeDLSharp" Version="1.1.1" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Folder Include="build\addons\counterstrikesharp\configs\Sympho\" />
-    <Folder Include="build\addons\counterstrikesharp\plugins\Sympho\sounds\" />
-  </ItemGroup>
-
 </Project>
