@@ -74,11 +74,26 @@ namespace Sympho
         [ConsoleCommand("css_yt")]
         public void YoutubeCommand(CCSPlayerController client, CommandInfo info)
         {
-            if (info.ArgCount > 1)
-                return;
+            var fullarg = info.ArgString;
+            var splitArg = fullarg.Split(" ");
+            bool start = false;
+            int starttime = 0;
 
-            var url = info.ArgString;
-            Task.Run(() => _youtube.ProceedYoutubeVideo(url));
+            if (splitArg.Length > 1)
+            {
+                start = int.TryParse(splitArg[1], out starttime);
+            }
+
+            var url = splitArg[0];
+
+            Task.Run(async () => {
+
+                if (start)
+                    await _youtube.ProceedYoutubeVideo(url, starttime);
+
+                else
+                    await _youtube.ProceedYoutubeVideo(url);
+            });
         }
 
         void LoadConfig()
@@ -89,7 +104,7 @@ namespace Sympho
                 return;
             }
 
-            var configPath = Path.Combine(Server.GameDirectory, "csgo/addons/counterstrikesharp/configs/Sympho/sounds.json");
+            var configPath = Path.Combine(ModuleDirectory, "sounds/sounds.json");
 
             if(!File.Exists(configPath))
             {

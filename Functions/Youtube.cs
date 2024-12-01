@@ -1,5 +1,11 @@
-﻿using CounterStrikeSharp.API;
-using VideoLibrary;
+﻿using System.Drawing;
+using System.Runtime.InteropServices;
+using CounterStrikeSharp.API;
+using CounterStrikeSharp.API.Modules.Utils;
+using Serilog.Core;
+using YoutubeDLSharp;
+using YoutubeDLSharp.Metadata;
+using YoutubeDLSharp.Options;
 
 namespace Sympho.Functions
 {
@@ -7,6 +13,8 @@ namespace Sympho.Functions
     {
         private Sympho? _plugin;
         private AudioHandler _audioHandler;
+        private string? _ffmpeg;
+        private string? _ytdlp;
         
         public Youtube(AudioHandler audioHandler)
         {
@@ -16,70 +24,99 @@ namespace Sympho.Functions
         public void Initialize(Sympho plugin)
         {
             _plugin = plugin;
-        }
 
-        public async Task ProceedYoutubeVideo(string url)
-        {
-            var valid = await IsVideoValid(url);
-
-            string audiopath = string.Empty;
-
-            if (valid)
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
-                audiopath = await DownloadYoutubeVideo(url);
+                _ffmpeg = "ffmpeg";
+                _ytdlp = "yt-dlp";
             }
 
-            if (audiopath != string.Empty)
+            else
             {
-                Server.NextFrame(() => _audioHandler.PlayAudio(audiopath));
+                _ffmpeg = "ffmpeg.exe";
+                _ytdlp = "yt-dlp.exe";
             }
         }
 
-        public async Task<string> DownloadYoutubeVideo(string url)
+        public async Task ProceedYoutubeVideo(string url, int startSec = 0, int duration = 0)
         {
-            DateTime dateTime = DateTime.Now;
-            var timeshort = dateTime.ToString("HHmmss");
+            var audiopath = await DownloadYoutubeVideo(url, startSec, duration);
+            var audioData = await GetYoutubeInfo(url);
 
-            var dest = Path.Combine(_plugin.ModuleDirectory, "temp");
+            var durationFormat = TimeSpan.FromSeconds((double)audioData.Duration!).ToString(@"hh\:mm\:ss");
+
+            if (audiopath != null)
+            {
+                Server.NextFrame(() => {
+                    _audioHandler.PlayAudio(audiopath);
+                    Server.PrintToChatAll($" {ChatColors.Default}[{ChatColors.Lime}Sympho{ChatColors.Default}] Youtube Title: {audioData.Title} | Duration: {durationFormat} | Author: {audioData.Uploader}");
+                });
+            }
+        }
+
+        public async Task<string?> DownloadYoutubeVideo(string url, int startSec = 0, int duration = 0)
+        {
+            var dest = Path.Combine(_plugin!.ModuleDirectory, "temp");
 
             if (!Directory.Exists(dest))
             {
                 Directory.CreateDirectory(dest);
             }
 
-            var inputPath = Path.Combine(dest, $"video_{timeshort}.mp4");
-            var outputPath = Path.Combine(dest, $"audio_{timeshort}.mp3");
+            var ytdl = new YoutubeDL();
 
-            using (var service = Client.For(YouTube.Default))
+            ytdl.YoutubeDLPath = Path.Combine(_plugin!.ModuleDirectory, _ytdlp!);
+            ytdl.OutputFolder = dest;
+
+            var response = await ytdl.RunAudioDownload(url, AudioConversionFormat.Mp3);
+            var downloadFilePath = response.Data;
+
+            if(response.Success && startSec > 0)
             {
-                var vid = await service.GetVideoAsync(url);
-                await File.WriteAllBytesAsync(inputPath, await vid.GetBytesAsync());
+                var trimmedFilePath = Path.Combine(Path.GetDirectoryName(downloadFilePath)!, Path.GetFileNameWithoutExtension(downloadFilePath) + "_trimmed" + Path.GetExtension(downloadFilePath));
 
-                await Task.Run(() => FFMpegCore.FFMpeg.ExtractAudio(inputPath, outputPath));
-
-                File.Delete(inputPath);
+                await TrimAudioAsync(downloadFilePath, trimmedFilePath, startSec, duration);
+                return trimmedFilePath;
             }
 
-            return outputPath;
+            return response.Data;
         }
 
-        static async Task<bool> IsVideoValid(string url)
+        public async Task<VideoData> GetYoutubeInfo(string url)
         {
-            using (HttpClient client = new HttpClient())
-            {
-                try
-                {
-                    HttpResponseMessage response = await client.GetAsync(url);
-                    string responseContent = await response.Content.ReadAsStringAsync();
-                    bool isValid = response.IsSuccessStatusCode && !responseContent.Contains("Video unavailable");
-                    return isValid;
-                }
-                catch
-                {
-                    // If an exception occurs, the URL is likely not valid or not accessible
-                    return false;
-                }
-            }
+            var ytdl = new YoutubeDL();
+
+            ytdl.YoutubeDLPath = Path.Combine(_plugin!.ModuleDirectory, _ytdlp!);
+            var response = await ytdl.RunVideoDataFetch(url);
+            return response.Data;
+        }
+
+        public async Task TrimAudioAsync(string inputFilePath, string outputFilePath, int startSec, int duration = 0) 
+        { 
+            string startTime = TimeSpan.FromSeconds(startSec).ToString(@"hh\:mm\:ss"); 
+            string durationTime = TimeSpan.FromSeconds(duration).ToString(@"hh\:mm\:ss");
+
+            string ffmpegCommand; 
+                
+            if(duration > 0)
+                ffmpegCommand = $"-i \"{inputFilePath}\" -ss {startTime} -t {durationTime} -c copy \"{outputFilePath}\""; 
+
+            else
+                ffmpegCommand = $"-i \"{inputFilePath}\" -ss {startTime} -c copy \"{outputFilePath}\"";
+
+            var process = new System.Diagnostics.Process 
+            { 
+                StartInfo = new System.Diagnostics.ProcessStartInfo 
+                { 
+                    FileName = Path.Combine(_plugin!.ModuleDirectory, _ffmpeg!), 
+                    Arguments = ffmpegCommand, 
+                    RedirectStandardOutput = true, 
+                    UseShellExecute = false, 
+                    CreateNoWindow = true, 
+                } 
+            }; 
+            process.Start(); 
+            await process.WaitForExitAsync(); 
         }
     }
 }

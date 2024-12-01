@@ -10,9 +10,8 @@
 
   <ItemGroup>
     <PackageReference Include="CounterStrikeSharp.API" Version="1.0.287" />
-    <PackageReference Include="FFMpegCore" Version="5.1.0" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="VideoLibrary" Version="3.2.6" />
+    <PackageReference Include="YoutubeDLSharp" Version="1.1.1" />
   </ItemGroup>
 
   <ItemGroup>
