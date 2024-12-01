@@ -18,13 +18,15 @@ namespace Sympho
         private ILogger<Sympho> _logger;
         private AudioHandler _handler;
         private Youtube _youtube;
+        private Event _event;
         public AudioService? AudioService { get; private set; }
 
-        public Sympho(ILogger<Sympho> logger, AudioHandler handler, Youtube youtube)
+        public Sympho(ILogger<Sympho> logger, AudioHandler handler, Youtube youtube, Event @event)
         {
             _logger = logger;
             _handler = handler;
             _youtube = youtube;
+            _event = @event;
         }
 
         public override void Load(bool hotReload)
@@ -36,38 +38,7 @@ namespace Sympho
 
             _handler.Initialize(AudioService, this);
             _youtube.Initialize(this);
-        }
-
-        [GameEventHandler]
-        public HookResult OnPlayerChat(EventPlayerChat @event, GameEventInfo info)
-        {
-            if (AudioService == null)
-                return HookResult.Continue;
-
-            if (!AudioService.ConfigsLoaded)
-                return HookResult.Continue;
-
-            var message = @event.Text;
-
-            var split = message.Split(' ');
-
-            var param1 = split.Length > 0 ? split[0] : string.Empty;
-            var param2 = split.Length > 1 ? split[1] : string.Empty;
-
-            var isIndex = int.TryParse(param2, out int index);
-
-            if (isIndex)
-            {
-                if (index < 1)
-                    index = 1;
-
-                _handler.AudioCommandCheck(param1, isIndex, index);
-            }
-
-            else
-                _handler.AudioCommandCheck(param1, isIndex, -1);
-
-            return HookResult.Continue;
+            _event.Initialize(AudioService, _handler, this);
         }
 
         [CommandHelper(1, "css_yt <video-url>")]
