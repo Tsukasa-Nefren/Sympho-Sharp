@@ -1,8 +1,10 @@
 ﻿using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
+using CounterStrikeSharp.API.Modules.Commands;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using Sympho.Functions;
 using Sympho.Models;
 
 namespace Sympho
@@ -13,27 +15,37 @@ namespace Sympho
         public override string ModuleVersion => "1.0";
         public override string ModuleAuthor => "Oylsister";
 
-        public bool configsLoaded = false;
         private ILogger<Sympho> _logger;
-        public List<CAudioConfig>? audioList;
+        private AudioHandler _handler;
+        private Youtube _youtube;
+        public AudioService? AudioService { get; private set; }
 
-        public Sympho(ILogger<Sympho> logger)
+        public Sympho(ILogger<Sympho> logger, AudioHandler handler, Youtube youtube)
         {
             _logger = logger;
+            _handler = handler;
+            _youtube = youtube;
         }
 
         public override void Load(bool hotReload)
         {
+            AudioService = new AudioService();
+            AudioService.PluginDirectory = ModuleDirectory;
+
             LoadConfig();
+
+            _handler.Initialize(AudioService, this);
+            _youtube.Initialize(this);
         }
 
         [GameEventHandler]
         public HookResult OnPlayerChat(EventPlayerChat @event, GameEventInfo info)
         {
-            if (!configsLoaded)
-            {
+            if (AudioService == null)
                 return HookResult.Continue;
-            }
+
+            if (!AudioService.ConfigsLoaded)
+                return HookResult.Continue;
 
             var message = @event.Text;
 
@@ -49,32 +61,49 @@ namespace Sympho
                 if (index < 1)
                     index = 1;
 
-                AudioCommandCheck(param1, isIndex, index);
+                _handler.AudioCommandCheck(param1, isIndex, index);
             }
 
             else
-                AudioCommandCheck(param1, isIndex, -1);
+                _handler.AudioCommandCheck(param1, isIndex, -1);
 
             return HookResult.Continue;
         }
 
+        [CommandHelper(1, "css_yt <video-url>")]
+        [ConsoleCommand("css_yt")]
+        public void YoutubeCommand(CCSPlayerController client, CommandInfo info)
+        {
+            if (info.ArgCount > 1)
+                return;
+
+            var url = info.ArgString;
+            Task.Run(() => _youtube.ProceedYoutubeVideo(url));
+        }
+
         void LoadConfig()
         {
+            if (AudioService == null)
+            {
+                _logger.LogError("AudioServices is null!");
+                return;
+            }
+
             var configPath = Path.Combine(Server.GameDirectory, "csgo/addons/counterstrikesharp/configs/Sympho/sounds.json");
 
             if(!File.Exists(configPath))
             {
                 _logger.LogError("Couldn't find config file! {0}", configPath);
-                configsLoaded = false;
+                AudioService.ConfigsLoaded = false;
                 return;
             }
 
-            audioList = JsonConvert.DeserializeObject<List<CAudioConfig>>(File.ReadAllText(configPath));
+            AudioService.AudioList = JsonConvert.DeserializeObject<List<CAudioConfig>>(File.ReadAllText(configPath));
 
             var totalCommand = 0;
             var totalSound = 0;
 
-            foreach(var audio in audioList!)
+            foreach(var audio in AudioService.AudioList!)
             {
                 if(audio.name == null || audio.sounds == null)
                     continue;
@@ -91,19 +120,22 @@ namespace Sympho
             }
 
             _logger.LogInformation("Found config file with {0} commands and {1} sound files", totalCommand, totalSound);
-            configsLoaded = true;
+            AudioService.ConfigsLoaded = true;
         }
 
         public int GetAudioIndex(string command)
         {
-            if (audioList == null)
+            if (AudioService == null)
                 return -1;
 
-            for(int i = 0; i < audioList.Count; i++)
+            if (AudioService.AudioList == null)
+                return -1;
+
+            for(int i = 0; i < AudioService.AudioList.Count; i++)
             {
-                for(int j = 0; j < audioList[i].name!.Count; j++)
+                for(int j = 0; j < AudioService.AudioList[i].name!.Count; j++)
                 {
-                    if (audioList[i].name![j] == command)
+                    if (AudioService.AudioList[i].name![j] == command)
                         return i;
                 }
             }

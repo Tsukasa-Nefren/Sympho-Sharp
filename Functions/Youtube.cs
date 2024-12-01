@@ -1,23 +1,21 @@
-﻿using System.Net;
-using CounterStrikeSharp.API;
-using CounterStrikeSharp.API.Core;
-using CounterStrikeSharp.API.Core.Attributes.Registration;
-using CounterStrikeSharp.API.Modules.Commands;
+﻿using CounterStrikeSharp.API;
 using VideoLibrary;
 
-namespace Sympho
+namespace Sympho.Functions
 {
-    public partial class Sympho
+    public class Youtube
     {
-        [CommandHelper(1, "css_yt <video-url>")]
-        [ConsoleCommand("css_yt")]
-        public void YoutubeCommand(CCSPlayerController client, CommandInfo info)
+        private Sympho? _plugin;
+        private AudioHandler _audioHandler;
+        
+        public Youtube(AudioHandler audioHandler)
         {
-            if (info.ArgCount > 1)
-                return;
+            _audioHandler = audioHandler;
+        }
 
-            var url = info.ArgString;
-            Task.Run(() => ProceedYoutubeVideo(url));
+        public void Initialize(Sympho plugin)
+        {
+            _plugin = plugin;
         }
 
         public async Task ProceedYoutubeVideo(string url)
@@ -31,9 +29,9 @@ namespace Sympho
                 audiopath = await DownloadYoutubeVideo(url);
             }
 
-            if(audiopath != string.Empty)
+            if (audiopath != string.Empty)
             {
-                Server.NextFrame(() => PlayAudio(audiopath));
+                Server.NextFrame(() => _audioHandler.PlayAudio(audiopath));
             }
         }
 
@@ -42,9 +40,9 @@ namespace Sympho
             DateTime dateTime = DateTime.Now;
             var timeshort = dateTime.ToString("HHmmss");
 
-            var dest = Path.Combine(ModuleDirectory, "temp");
+            var dest = Path.Combine(_plugin.ModuleDirectory, "temp");
 
-            if(!Directory.Exists(dest))
+            if (!Directory.Exists(dest))
             {
                 Directory.CreateDirectory(dest);
             }
@@ -71,17 +69,17 @@ namespace Sympho
             {
                 try
                 {
-                    HttpResponseMessage response = await client.GetAsync(url); 
+                    HttpResponseMessage response = await client.GetAsync(url);
                     string responseContent = await response.Content.ReadAsStringAsync();
                     bool isValid = response.IsSuccessStatusCode && !responseContent.Contains("Video unavailable");
-                    return isValid; 
-                } 
-                catch 
-                { 
+                    return isValid;
+                }
+                catch
+                {
                     // If an exception occurs, the URL is likely not valid or not accessible
-                    return false; 
-                } 
-            } 
+                    return false;
+                }
+            }
         }
     }
 }

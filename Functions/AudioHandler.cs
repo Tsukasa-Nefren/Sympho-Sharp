@@ -1,16 +1,35 @@
 ﻿using Microsoft.Extensions.Logging;
+using Sympho.Models;
 
-namespace Sympho
+namespace Sympho.Functions
 {
-    public partial class Sympho
+    public class AudioHandler
     {
+        private readonly ILogger<Sympho> _logger;
+        private AudioService? _audio;
+        private Sympho? _plugin;
+
+        public AudioHandler(ILogger<Sympho> logger)
+        {
+            _logger = logger;
+        }
+
+        public void Initialize(AudioService audio, Sympho plugin)
+        {
+            _audio = audio;
+            _plugin = plugin;
+        }
+
         public void AudioCommandCheck(string command, bool specific, int soundIndex = -1)
         {
-            if (!configsLoaded)
+            if (_audio == null)
+                return;
+
+            if (!_audio.ConfigsLoaded)
                 return;
 
             // null or there is no audio in list.
-            if (audioList == null || audioList.Count <= 0) return;
+            if (_audio.AudioList == null || _audio.AudioList.Count <= 0) return;
 
             // index always start with 0 but since we receive command from player who start count '1'
             if (specific)
@@ -21,13 +40,13 @@ namespace Sympho
                 soundIndex = 0;
 
             // get an main array index of 'audioList'
-            var index = GetAudioIndex(command);
+            var index = _plugin!.GetAudioIndex(command);
 
             // -1 mean not found
             if (index == -1) return;
 
             // in case there is only 1 sound
-            if (audioList[index].sounds!.Count <= 1)
+            if (_audio.AudioList[index].sounds!.Count <= 1)
             {
                 soundIndex = 0;
             }
@@ -39,12 +58,12 @@ namespace Sympho
                 if (!specific)
                 {
                     var random = new Random();
-                    soundIndex = random.Next(0, audioList[index].sounds!.Count - 1);
+                    soundIndex = random.Next(0, _audio.AudioList[index].sounds!.Count - 1);
                 }
             }
 
             // combine path of sound file
-            var soundPath = Path.Combine(ModuleDirectory, $"sounds\\{audioList[index].sounds![soundIndex]}");
+            var soundPath = Path.Combine(_audio.PluginDirectory!, $"sounds\\{_audio.AudioList[index].sounds![soundIndex]}");
             PlayAudio(soundPath);
         }
 
