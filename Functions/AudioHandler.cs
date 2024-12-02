@@ -8,6 +8,7 @@ namespace Sympho.Functions
         private readonly ILogger<Sympho> _logger;
         private AudioService? _audio;
         private Sympho? _plugin;
+        private Settings? _settings;
 
         public AudioHandler(ILogger<Sympho> logger)
         {
@@ -20,6 +21,11 @@ namespace Sympho.Functions
             _plugin = plugin;
         }
 
+        public void InitializeConfig(Settings settings)
+        {
+            _settings = settings;
+        }
+
         public void AudioCommandCheck(string command, bool specific, int soundIndex = -1)
         {
             if (_audio == null)
@@ -30,6 +36,9 @@ namespace Sympho.Functions
 
             // null or there is no audio in list.
             if (_audio.AudioList == null || _audio.AudioList.Count <= 0) return;
+
+            // if it's got blocked
+
 
             // index always start with 0 but since we receive command from player who start count '1'
             if (specific)
@@ -76,6 +85,11 @@ namespace Sympho.Functions
             }
 
             AudioPlayer.SetAllAudioFile(path);
+        }
+
+        public static void StopAudio()
+        {
+            AudioPlayer.SetAllAudioFile("");
         }
     }
 }

@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Modules.Utils;
 using Serilog.Core;
+using Sympho.Models;
 using YoutubeDLSharp;
 using YoutubeDLSharp.Metadata;
 using YoutubeDLSharp.Options;
@@ -15,6 +16,7 @@ namespace Sympho.Functions
         private AudioHandler _audioHandler;
         private string? _ffmpeg;
         private string? _ytdlp;
+        private Settings? _settings;
         
         public Youtube(AudioHandler audioHandler)
         {
@@ -38,6 +40,11 @@ namespace Sympho.Functions
             }
         }
 
+        public void InitialConfigs(Settings settings)
+        {
+            _settings = settings;
+        }
+
         public async Task ProceedYoutubeVideo(string url, int startSec = 0, int duration = 0)
         {
             var audiopath = await DownloadYoutubeVideo(url, startSec, duration);
@@ -49,7 +56,9 @@ namespace Sympho.Functions
             {
                 Server.NextFrame(() => {
                     _audioHandler.PlayAudio(audiopath);
-                    Server.PrintToChatAll($" {ChatColors.Default}[{ChatColors.Lime}Sympho{ChatColors.Default}] Youtube Title: {audioData.Title} | Duration: {durationFormat} | Author: {audioData.Uploader}");
+                    // Server.PrintToChatAll($" {ChatColors.Default}[{ChatColors.Lime}Sympho{ChatColors.Default}] Youtube Title: {audioData.Title} | Duration: {durationFormat} | Author: {audioData.Uploader}");
+
+                    Server.PrintToChatAll($" {_plugin?.Localizer["Prefix"]} {_plugin?.Localizer["Youtube.Info", audioData.Title, durationFormat, audioData.Uploader]}");
                 });
             }
         }

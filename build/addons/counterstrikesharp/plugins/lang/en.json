@@ -1,0 +1,5 @@
+{
+    "Prefix": "{Default}[{Lime}Sympho{Default}]",
+    "Youtube.NotAllowed": "You cannot use this feature right now.",
+    "Youtube.Info":  "Video Title: {0} | Duration: {1} | Uploader {2}"
+}

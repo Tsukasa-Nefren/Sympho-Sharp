@@ -3,6 +3,7 @@ using CounterStrikeSharp.API.Core;
 using Sympho.Models;
 using Microsoft.Extensions.Logging;
 using static CounterStrikeSharp.API.Core.Listeners;
+using System.Runtime;
 
 namespace Sympho.Functions
 {
@@ -12,6 +13,7 @@ namespace Sympho.Functions
         private AudioService? audioService;
         private AudioHandler? audioHandler;
         private Sympho? _plugin;
+        private Settings? _settings;
 
         public Event(ILogger<Sympho> logger)
         {
@@ -32,6 +34,11 @@ namespace Sympho.Functions
 
             plugin.RegisterEventHandler<EventPlayerChat>(OnPlayerChat);
             plugin.RegisterListener<OnMapStart>(OnMapStart);
+        }
+
+        public void InitialConfigs(Settings settings)
+        {
+            _settings = settings;
         }
 
         public HookResult OnPlayerChat(EventPlayerChat @event, GameEventInfo info)

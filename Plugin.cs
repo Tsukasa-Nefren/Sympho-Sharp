@@ -1,6 +1,7 @@
 ﻿using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
+using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
@@ -9,7 +10,7 @@ using Sympho.Models;
 
 namespace Sympho
 {
-    public partial class Sympho : BasePlugin
+    public partial class Sympho : BasePlugin, IPluginConfig<Settings>
     {
         public override string ModuleName => "Sympho Audio Player";
         public override string ModuleVersion => "1.0";
@@ -20,6 +21,7 @@ namespace Sympho
         private Youtube _youtube;
         private Event _event;
         public AudioService? AudioService { get; private set; }
+        public Settings Config { get; set; } = new();
 
         public Sympho(ILogger<Sympho> logger, AudioHandler handler, Youtube youtube, Event @event)
         {
@@ -27,6 +29,15 @@ namespace Sympho
             _handler = handler;
             _youtube = youtube;
             _event = @event;
+        }
+
+        public void OnConfigParsed(Settings config)
+        {
+            Config = config;
+
+            _handler.InitializeConfig(config);
+            _event.InitialConfigs(config);
+            _youtube.InitialConfigs(config);
         }
 
         public override void Load(bool hotReload)
@@ -41,10 +52,33 @@ namespace Sympho
             _event.Initialize(AudioService, _handler, this);
         }
 
-        [CommandHelper(1, "css_yt <video-url>")]
+        [CommandHelper(1, "css_yt <video-url> [start-seconds]")]
         [ConsoleCommand("css_yt")]
         public void YoutubeCommand(CCSPlayerController client, CommandInfo info)
         {
+            if (!Config.AllowYoutube)
+            {
+                bool allow = true;
+
+                if (AdminManager.PlayerHasPermissions(client, "@css/slay"))
+                {
+                    if(Config.BypassYoutubeAdmin)
+                        allow = true;
+
+                    else
+                        allow = false;
+                }
+
+                else
+                    allow = false;
+
+                if(!allow)
+                {
+                    info.ReplyToCommand($" {Localizer["Prefix"]} {Localizer["Youtube.NotAllowed"]}");
+                    return;
+                }
+            }
+
             var fullarg = info.ArgString;
             var splitArg = fullarg.Split(" ");
             bool start = false;
