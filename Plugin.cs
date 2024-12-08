@@ -17,27 +17,22 @@ namespace Sympho
         public override string ModuleAuthor => "Oylsister";
 
         private ILogger<Sympho> _logger;
-        private AudioHandler _handler;
-        private Youtube _youtube;
-        private Event _event;
+        private AudioHandler? _handler;
+        private Youtube? _youtube;
+        private Event? _event;
         public AudioService? AudioService { get; private set; }
         public Settings Config { get; set; } = new();
 
-        public Sympho(ILogger<Sympho> logger, AudioHandler handler, Youtube youtube, Event @event)
+        public Sympho(ILogger<Sympho> logger)
         {
             _logger = logger;
-            _handler = handler;
-            _youtube = youtube;
-            _event = @event;
         }
 
         public void OnConfigParsed(Settings config)
         {
             Config = config;
 
-            _handler.InitializeConfig(config);
-            _event.InitialConfigs(config);
-            _youtube.InitialConfigs(config);
+            _event?.InitialConfigs(config);
         }
 
         public override void Load(bool hotReload)
@@ -45,11 +40,15 @@ namespace Sympho
             AudioService = new AudioService();
             AudioService.PluginDirectory = ModuleDirectory;
 
+            _handler = new(this, _logger);
+            _youtube = new(this, _handler, _logger);
+            _event = new(this, _logger);
+
             LoadConfig();
 
-            _handler.Initialize(AudioService, this);
-            _youtube.Initialize(this);
-            _event.Initialize(AudioService, _handler, this);
+            _handler.Initialize(AudioService);
+            _youtube.Initialize();
+            _event.Initialize(AudioService, _handler);
         }
 
         [CommandHelper(1, "css_yt <video-url> [start-seconds]")]
@@ -94,11 +93,22 @@ namespace Sympho
             Task.Run(async () => {
 
                 if (start)
-                    await _youtube.ProceedYoutubeVideo(url, starttime);
+                    await _youtube!.ProceedYoutubeVideo(url, starttime);
 
                 else
-                    await _youtube.ProceedYoutubeVideo(url);
+                    await _youtube!.ProceedYoutubeVideo(url);
             });
+        }
+
+
+        [ConsoleCommand("css_stopall")]
+        public void StopAllSound(CCSPlayerController client, CommandInfo info)
+        {
+            if (AudioPlayer.IsAllPlaying())
+            {
+                Server.PrintToChatAll($" {Localizer["Prefix"]} {Localizer["Audio.AllStop"]}");
+                AudioHandler.StopAudio();
+            }
         }
 
         void LoadConfig()

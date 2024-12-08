@@ -8,22 +8,16 @@ namespace Sympho.Functions
         private readonly ILogger<Sympho> _logger;
         private AudioService? _audio;
         private Sympho? _plugin;
-        private Settings? _settings;
 
-        public AudioHandler(ILogger<Sympho> logger)
+        public AudioHandler(Sympho plugin, ILogger<Sympho> logger)
         {
+            _plugin = plugin;
             _logger = logger;
         }
 
-        public void Initialize(AudioService audio, Sympho plugin)
+        public void Initialize(AudioService audio)
         {
             _audio = audio;
-            _plugin = plugin;
-        }
-
-        public void InitializeConfig(Settings settings)
-        {
-            _settings = settings;
         }
 
         public void AudioCommandCheck(string command, bool specific, int soundIndex = -1)
@@ -72,7 +66,7 @@ namespace Sympho.Functions
             }
 
             // combine path of sound file
-            var soundPath = Path.Combine(_audio.PluginDirectory!, $"sounds\\{_audio.AudioList[index].sounds![soundIndex]}");
+            var soundPath = Path.Combine(_audio.PluginDirectory!, $"sounds/{_audio.AudioList[index].sounds![soundIndex]}");
             PlayAudio(soundPath);
         }
 

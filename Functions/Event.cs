@@ -15,25 +15,25 @@ namespace Sympho.Functions
         private Sympho? _plugin;
         private Settings? _settings;
 
-        public Event(ILogger<Sympho> logger)
+        public Event(Sympho plugin, ILogger<Sympho> logger)
         {
+            _plugin = plugin;
             _logger = logger;
         }
 
-        public void Initialize(AudioService service, AudioHandler handler, Sympho plugin)
+        public void Initialize(AudioService service, AudioHandler handler)
         {
             audioService = service;
             audioHandler = handler;
-            _plugin = plugin;
 
-            if(plugin == null)
+            if(_plugin == null)
             {
                 _logger.LogError("Core plugin is null!");
                 return;
             }
 
-            plugin.RegisterEventHandler<EventPlayerChat>(OnPlayerChat);
-            plugin.RegisterListener<OnMapStart>(OnMapStart);
+            _plugin.RegisterEventHandler<EventPlayerChat>(OnPlayerChat);
+            _plugin.RegisterListener<OnMapStart>(OnMapStart);
         }
 
         public void InitialConfigs(Settings settings)

@@ -2,6 +2,7 @@
 using System.Runtime.InteropServices;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Modules.Utils;
+using Microsoft.Extensions.Logging;
 using Serilog.Core;
 using Sympho.Models;
 using YoutubeDLSharp;
@@ -16,17 +17,17 @@ namespace Sympho.Functions
         private AudioHandler _audioHandler;
         private string? _ffmpeg;
         private string? _ytdlp;
-        private Settings? _settings;
+        private readonly ILogger<Sympho> _logger;
         
-        public Youtube(AudioHandler audioHandler)
-        {
-            _audioHandler = audioHandler;
-        }
-
-        public void Initialize(Sympho plugin)
+        public Youtube(Sympho plugin, AudioHandler audioHandler, ILogger<Sympho> logger)
         {
             _plugin = plugin;
+            _audioHandler = audioHandler;
+            _logger = logger;
+        }
 
+        public void Initialize()
+        {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
                 _ffmpeg = "ffmpeg";
@@ -38,11 +39,6 @@ namespace Sympho.Functions
                 _ffmpeg = "ffmpeg.exe";
                 _ytdlp = "yt-dlp.exe";
             }
-        }
-
-        public void InitialConfigs(Settings settings)
-        {
-            _settings = settings;
         }
 
         public async Task ProceedYoutubeVideo(string url, int startSec = 0, int duration = 0)
@@ -75,10 +71,25 @@ namespace Sympho.Functions
             var ytdl = new YoutubeDL();
 
             ytdl.YoutubeDLPath = Path.Combine(_plugin!.ModuleDirectory, _ytdlp!);
+
+            if(!File.Exists(Path.Combine(_plugin!.ModuleDirectory, _ytdlp!)))
+            {
+                _logger.LogError("Couldn't find yt-dlp path!");
+                return null;
+            }
+
+            _logger.LogInformation("Proceeding Downloading");
+
             ytdl.OutputFolder = dest;
 
             var response = await ytdl.RunAudioDownload(url, AudioConversionFormat.Mp3);
             var downloadFilePath = response.Data;
+
+            if(!response.Success)
+            {
+                _logger.LogError("Couldn't download the file!");
+                return null;
+            }
 
             if(response.Success && startSec > 0)
             {
