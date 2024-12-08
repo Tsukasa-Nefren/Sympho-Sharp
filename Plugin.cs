@@ -13,7 +13,7 @@ namespace Sympho
     public partial class Sympho : BasePlugin, IPluginConfig<Settings>
     {
         public override string ModuleName => "Sympho Audio Player";
-        public override string ModuleVersion => "1.0";
+        public override string ModuleVersion => "Alpha 1.0";
         public override string ModuleAuthor => "Oylsister";
 
         private ILogger<Sympho> _logger;
@@ -99,7 +99,6 @@ namespace Sympho
                     await _youtube!.ProceedYoutubeVideo(url);
             });
         }
-
 
         [ConsoleCommand("css_stopall")]
         public void StopAllSound(CCSPlayerController client, CommandInfo info)
