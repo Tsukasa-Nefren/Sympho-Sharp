@@ -1,4 +1,6 @@
-﻿using Microsoft.Extensions.Logging;
+﻿using CounterStrikeSharp.API.Core;
+using CounterStrikeSharp.API.Modules.Admin;
+using Microsoft.Extensions.Logging;
 using Sympho.Models;
 
 namespace Sympho.Functions
@@ -20,8 +22,16 @@ namespace Sympho.Functions
             _audio = audio;
         }
 
-        public void AudioCommandCheck(string command, bool specific, int soundIndex = -1)
+        public void AudioCommandCheck(CCSPlayerController client, string command, bool specific, int soundIndex = -1)
         {
+            var admin = AdminManager.PlayerHasPermissions(client, "@css/kick");
+
+            if(AntiSpamData.GetBlockStatus() && !admin)
+            {
+                client.PrintToChat($" {_plugin?.Localizer["Prefix"]} {_plugin?.Localizer["AntiSpam.Cooldown"]}");
+                return;
+            }
+
             if (_audio == null)
                 return;
 
@@ -67,7 +77,11 @@ namespace Sympho.Functions
 
             // combine path of sound file
             var soundPath = Path.Combine(_audio.PluginDirectory!, $"sounds/{_audio.AudioList[index].sounds![soundIndex]}");
+
             PlayAudio(soundPath);
+
+            if(!admin)
+                AntiSpamData.SetPlayedCount(AntiSpamData.PlayedCount + 1);
         }
 
         public void PlayAudio(string path)
