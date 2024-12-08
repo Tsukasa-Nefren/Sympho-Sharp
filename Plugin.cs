@@ -41,7 +41,7 @@ namespace Sympho
             {
                 SpamTimerCheck = AddTimer(Config.SpamCheckInterval, () => {
                     CheckSpam();
-                });
+                }, TimerFlags.REPEAT|TimerFlags.STOP_ON_MAPCHANGE);
             }
         }
 
