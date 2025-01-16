@@ -128,7 +128,7 @@ namespace Sympho.Functions
             { 
                 StartInfo = new System.Diagnostics.ProcessStartInfo 
                 { 
-                    FileName = Path.Combine(_plugin!.ModuleDirectory, _ffmpeg!), 
+                    FileName = "ffmpeg", 
                     Arguments = ffmpegCommand, 
                     RedirectStandardOutput = true, 
                     UseShellExecute = false, 

@@ -4,6 +4,8 @@ using Sympho.Models;
 using Microsoft.Extensions.Logging;
 using static CounterStrikeSharp.API.Core.Listeners;
 using System.Runtime;
+using CounterStrikeSharp.API;
+using CounterStrikeSharp.API.Modules.Timers;
 
 namespace Sympho.Functions
 {
@@ -49,6 +51,12 @@ namespace Sympho.Functions
             if (!audioService.ConfigsLoaded)
                 return HookResult.Continue;
 
+            var userid = @event.Userid;
+            var client = Utilities.GetPlayerFromUserid(userid);
+
+            if(client == null)
+                return HookResult.Continue;
+
             var message = @event.Text;
 
             var split = message.Split(' ');
@@ -63,11 +71,11 @@ namespace Sympho.Functions
                 if (index < 1)
                     index = 1;
 
-                audioHandler?.AudioCommandCheck(param1, isIndex, index);
+                audioHandler?.AudioCommandCheck(client, param1, isIndex, index);
             }
 
             else
-                audioHandler?.AudioCommandCheck(param1, isIndex, -1);
+                audioHandler?.AudioCommandCheck(client, param1, isIndex, -1);
 
             return HookResult.Continue;
         }
@@ -75,6 +83,13 @@ namespace Sympho.Functions
         public void OnMapStart(string mapname)
         {
             ClearTempFiles();
+
+            if (_plugin?.Config.EnableAntiSpam ?? false)
+            {
+                _plugin.SpamTimerCheck = _plugin.AddTimer(_plugin.Config.SpamCheckInterval, () => {
+                    _plugin.CheckSpam();
+                }, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
+            }
         }
 
         public void ClearTempFiles()

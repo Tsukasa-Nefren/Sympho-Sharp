@@ -11,15 +11,39 @@
 
 ## Requirement
 - [AudioPlayer](https://github.com/samyycX/AudioPlayer)
-- [FFMpeg](https://www.ffmpeg.org/) (For both in PATH and in plugin folder)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 
 ## Installation
 1. Drag all files into ``addons/counterstrikesharp/``
-2. Download and place ``yt-dlp`` and ``ffmpeg`` binaries file ***(Depending your os, if Windows it with be .exe)*** into Sympho plugin folder.
-3. Set permission for both ``yt-dlp`` and ``ffmpeg`` to 0764 or greater.
+2. Download and place ``yt-dlp`` binariy file ***(Depending your os, if Windows it with be .exe)*** into Sympho plugin folder.
+3. Set permission for both ``yt-dlp`` to 0764 or greater.
 4. Enjoy
 
 ## Command
 - ``css_yt <url> [second_start]`` Playing youtube audio sound. (second_start is optional for setting which second of audio should start play)
 - ``css_stopall`` Admin Command for stop all sound from playing in that moment.
+
+## Example Sound Configuration
+
+You can add list of the sound by edit ``Sympho/sounds/sounds.json`` file. Example usage for "ayaya" sound, if just ``!ayaya`` will random select sound in the list to be played, but if put the number behind command like ``!ayaya 2``, File "ayaya 2.mp3" will be played.
+
+```jsonc
+[
+    {
+        "name": [ "!tuturu", "!tutu" ], // they can have multiple command to play the same one sound.
+        "sounds": [ "tuturu.wav" ]
+    },
+    {
+        "name": [ "!oyl" ],
+        "sounds": [ "oyl/grenade.mp3", "oyl/yabai.mp3" ] // you can add folder to organize your sound files.
+    },
+    {
+        "name": [ "!ayaya" ],
+        "sounds": [ "ayaya 1.mp3", "ayaya 2.mp3", "ayaya 3.mp3", "ayaayaya.mp3" ] // one command can have multiple sound.
+    },
+    {
+        "name": [ "!rine" ],
+        "sounds": [ "rine.mp3" ]
+    }
+]
+```

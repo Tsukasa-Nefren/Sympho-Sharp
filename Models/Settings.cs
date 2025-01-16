@@ -10,6 +10,6 @@ namespace Sympho.Models
         public bool EnableAntiSpam { get; set; } = true;
         public int MaxSpamPerInterval { get; set; } = 10;
         public float SpamCheckInterval { get; set; } = 20.0f;
-        public bool AntiSpamIgnoreAdmin { get; set; } = true;
+        public float AntiSpamCooldown { get; set; } = 60.0f;
     }
 }

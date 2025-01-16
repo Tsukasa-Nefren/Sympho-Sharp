@@ -2,5 +2,8 @@
     "Prefix": "{Default}[{Lime}Sympho{Default}]",
     "Youtube.NotAllowed": "You cannot use this feature right now.",
     "Youtube.Info": "Video Title: {0} | Duration: {1} | Uploader: {2}",
-    "Audio.AllStop":  "All audio has been stopped playing."
+    "Audio.AllStop": "All audio has been stopped playing.",
+    "AntiSpam.Cooldown": "This feature is currently in cooldown now",
+    "AntiSpam.StopByAntiSpam": "Cooldown is triggered, all sound will become available again in {0} seconds.",
+    "AntiSpam.CooldownEnd": "Cooldown period is over."
 }
