@@ -11,7 +11,6 @@
 
 ## Requirement
 - [AudioPlayer](https://github.com/samyycX/AudioPlayer)
-- [FFMpeg](https://www.ffmpeg.org/) (This link is windows for linux use terminal command to install instead.)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 
 ## Installation
@@ -23,3 +22,28 @@
 ## Command
 - ``css_yt <url> [second_start]`` Playing youtube audio sound. (second_start is optional for setting which second of audio should start play)
 - ``css_stopall`` Admin Command for stop all sound from playing in that moment.
+
+## Example Sound Configuration
+
+Example usage for "ayaya" sound, if just ``!ayaya`` will random select sound in the list to be played, but if put the number behind command like ``!ayaya 2``, File "ayaya 2.mp3" will be played.
+
+```jsonc
+[
+    {
+        "name": [ "!tuturu", "!tutu" ], // they can have multiple command to play the same one sound.
+        "sounds": [ "tuturu.wav" ]
+    },
+    {
+        "name": [ "!oyl" ],
+        "sounds": [ "oyl/grenade.mp3", "oyl/yabai.mp3" ] // you can add folder to organize your sound files.
+    },
+    {
+        "name": [ "!ayaya" ],
+        "sounds": [ "ayaya 1.mp3", "ayaya 2.mp3", "ayaya 3.mp3", "ayaayaya.mp3" ] // one command can have multiple sound.
+    },
+    {
+        "name": [ "!rine" ],
+        "sounds": [ "rine.mp3" ]
+    }
+]
+```
