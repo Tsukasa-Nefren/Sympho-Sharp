@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using static CounterStrikeSharp.API.Core.Listeners;
 using System.Runtime;
 using CounterStrikeSharp.API;
+using CounterStrikeSharp.API.Modules.Timers;
 
 namespace Sympho.Functions
 {
@@ -82,6 +83,13 @@ namespace Sympho.Functions
         public void OnMapStart(string mapname)
         {
             ClearTempFiles();
+
+            if (_plugin?.Config.EnableAntiSpam ?? false)
+            {
+                _plugin.SpamTimerCheck = _plugin.AddTimer(_plugin.Config.SpamCheckInterval, () => {
+                    _plugin.CheckSpam();
+                }, TimerFlags.REPEAT | TimerFlags.STOP_ON_MAPCHANGE);
+            }
         }
 
         public void ClearTempFiles()

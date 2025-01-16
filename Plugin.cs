@@ -15,7 +15,7 @@ namespace Sympho
     public partial class Sympho : BasePlugin, IPluginConfig<Settings>
     {
         public override string ModuleName => "Sympho Audio Player";
-        public override string ModuleVersion => "Alpha 1.0";
+        public override string ModuleVersion => "Alpha 1.1";
         public override string ModuleAuthor => "Oylsister";
 
         private ILogger<Sympho> _logger;
@@ -36,13 +36,6 @@ namespace Sympho
             Config = config;
 
             _event?.InitialConfigs(config);
-
-            if(Config.EnableAntiSpam)
-            {
-                SpamTimerCheck = AddTimer(Config.SpamCheckInterval, () => {
-                    CheckSpam();
-                }, TimerFlags.REPEAT|TimerFlags.STOP_ON_MAPCHANGE);
-            }
         }
 
         public override void Load(bool hotReload)
