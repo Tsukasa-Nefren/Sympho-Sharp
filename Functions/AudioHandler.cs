@@ -1,4 +1,5 @@
-﻿using CounterStrikeSharp.API.Core;
+﻿using CounterStrikeSharp.API;
+using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Modules.Admin;
 using Microsoft.Extensions.Logging;
 using Sympho.Models;
@@ -71,7 +72,7 @@ namespace Sympho.Functions
                 if (!specific)
                 {
                     var random = new Random();
-                    soundIndex = random.Next(0, _audio.AudioList[index].sounds!.Count - 1);
+                    soundIndex = random.Next(0, _audio.AudioList[index].sounds!.Count);
                 }
             }
 
