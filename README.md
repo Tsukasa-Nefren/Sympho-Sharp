@@ -11,13 +11,13 @@
 
 ## Requirement
 - [AudioPlayer](https://github.com/samyycX/AudioPlayer)
-- [FFMpeg](https://www.ffmpeg.org/) (For both in PATH and in plugin folder)
+- [FFMpeg](https://www.ffmpeg.org/) (This link is windows for linux use terminal command to install instead.)
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 
 ## Installation
 1. Drag all files into ``addons/counterstrikesharp/``
-2. Download and place ``yt-dlp`` and ``ffmpeg`` binaries file ***(Depending your os, if Windows it with be .exe)*** into Sympho plugin folder.
-3. Set permission for both ``yt-dlp`` and ``ffmpeg`` to 0764 or greater.
+2. Download and place ``yt-dlp`` binariy file ***(Depending your os, if Windows it with be .exe)*** into Sympho plugin folder.
+3. Set permission for both ``yt-dlp`` to 0764 or greater.
 4. Enjoy
 
 ## Command
