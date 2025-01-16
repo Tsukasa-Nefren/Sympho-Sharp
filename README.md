@@ -25,7 +25,7 @@
 
 ## Example Sound Configuration
 
-Example usage for "ayaya" sound, if just ``!ayaya`` will random select sound in the list to be played, but if put the number behind command like ``!ayaya 2``, File "ayaya 2.mp3" will be played.
+You can add list of the sound by edit ``Sympho/sounds/sounds.json`` file. Example usage for "ayaya" sound, if just ``!ayaya`` will random select sound in the list to be played, but if put the number behind command like ``!ayaya 2``, File "ayaya 2.mp3" will be played.
 
 ```jsonc
 [
