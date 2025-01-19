@@ -4,6 +4,8 @@ using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Core.Attributes.Registration;
 using CounterStrikeSharp.API.Modules.Admin;
 using CounterStrikeSharp.API.Modules.Commands;
+using CounterStrikeSharp.API.Modules.Cvars;
+using CounterStrikeSharp.API.Modules.Cvars.Validators;
 using CounterStrikeSharp.API.Modules.Timers;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
@@ -25,6 +27,7 @@ namespace Sympho
         public AudioService? AudioService { get; private set; }
         public Settings Config { get; set; } = new();
         public CounterStrikeSharp.API.Modules.Timers.Timer? SpamTimerCheck = null;
+        public FakeConVar<float> CVAR_Volume = new FakeConVar<float>("css_sympho_volume", "Volume of Sympho sound", 1.0f, ConVarFlags.FCVAR_NONE, new RangeValidator<float>(0.1f, 1.0f));
 
         public Sympho(ILogger<Sympho> logger)
         {
