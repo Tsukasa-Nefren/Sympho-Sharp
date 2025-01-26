@@ -17,7 +17,7 @@ namespace Sympho
     public partial class Sympho : BasePlugin, IPluginConfig<Settings>
     {
         public override string ModuleName => "Sympho Audio Player";
-        public override string ModuleVersion => "Alpha 1.1";
+        public override string ModuleVersion => "Alpha 1.2";
         public override string ModuleAuthor => "Oylsister";
 
         private ILogger<Sympho> _logger;
@@ -137,6 +137,46 @@ namespace Sympho
             {
                 Server.PrintToChatAll($" {Localizer["Prefix"]} {Localizer["Audio.AllStop"]}");
                 AudioHandler.StopAudio();
+            }
+        }
+
+        [ConsoleCommand("css_search")]
+        public void SearchCommand(CCSPlayerController client, CommandInfo info)
+        {
+            if (info.ArgCount < 2)
+            {
+                var result = AudioService?.AudioList?.SelectMany(sound => sound.name!).ToList();
+
+                if (result == null || result.Count <= 0)
+                {
+                    info.ReplyToCommand($" {Localizer["Prefix"]} {Localizer["Search.NoResult"]}");
+                    return;
+                }
+
+                var soundlist = string.Join(", ", result.Take(20));
+
+                info.ReplyToCommand($" {Localizer["Prefix"]} {Localizer["Search.Result"]} {soundlist}");
+
+                if(result.Count > 20)
+                    info.ReplyToCommand($" {Localizer["Prefix"]} {Localizer["Search.MoreResult", result.Count - 20]}");
+            }
+
+            else
+            {
+                var search = info.ArgString;
+                var result = AudioService?.AudioList?.SelectMany(sound => sound.name!).Where(sound => sound.Contains(search)).ToList();
+
+                if (result == null || result.Count <= 0)
+                {
+                    info.ReplyToCommand($" {Localizer["Prefix"]} {Localizer["Search.NoResult"]}");
+                    return;
+                }
+
+                var soundlist = string.Join(", ", result.Take(20));
+                info.ReplyToCommand($" {Localizer["Prefix"]} {Localizer["Search.Result"]} {soundlist}");
+
+                if (result.Count > 20)
+                    info.ReplyToCommand($" {Localizer["Prefix"]} {Localizer["Search.MoreResult", result.Count - 20]}");
             }
         }
 
