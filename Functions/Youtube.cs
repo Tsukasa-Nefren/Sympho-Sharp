@@ -1,10 +1,6 @@
-﻿using System.Drawing;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using CounterStrikeSharp.API;
-using CounterStrikeSharp.API.Modules.Utils;
 using Microsoft.Extensions.Logging;
-using Serilog.Core;
-using Sympho.Models;
 using YoutubeDLSharp;
 using YoutubeDLSharp.Metadata;
 using YoutubeDLSharp.Options;
@@ -15,7 +11,6 @@ namespace Sympho.Functions
     {
         private Sympho? _plugin;
         private AudioHandler _audioHandler;
-        private string? _ffmpeg;
         private string? _ytdlp;
         private readonly ILogger<Sympho> _logger;
         
@@ -30,13 +25,11 @@ namespace Sympho.Functions
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
-                _ffmpeg = "ffmpeg";
                 _ytdlp = "yt-dlp";
             }
 
             else
             {
-                _ffmpeg = "ffmpeg.exe";
                 _ytdlp = "yt-dlp.exe";
             }
         }
@@ -70,14 +63,7 @@ namespace Sympho.Functions
 
             var ytdl = new YoutubeDL();
 
-            ytdl.YoutubeDLPath = Path.Combine(_plugin!.ModuleDirectory, _ytdlp!);
-
-            if(!File.Exists(Path.Combine(_plugin!.ModuleDirectory, _ytdlp!)))
-            {
-                _logger.LogError("Couldn't find yt-dlp path!");
-                return null;
-            }
-
+            ytdl.YoutubeDLPath = "yt-dlp";
             _logger.LogInformation("Proceeding Downloading");
 
             ytdl.OutputFolder = dest;

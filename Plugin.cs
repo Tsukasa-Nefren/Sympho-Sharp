@@ -133,7 +133,7 @@ namespace Sympho
         [ConsoleCommand("css_stopall")]
         public void StopAllSound(CCSPlayerController client, CommandInfo info)
         {
-            if (AudioPlayer.IsAllPlaying())
+            if (Audio.IsAllPlaying())
             {
                 Server.PrintToChatAll($" {Localizer["Prefix"]} {Localizer["Audio.AllStop"]}");
                 AudioHandler.StopAudio();

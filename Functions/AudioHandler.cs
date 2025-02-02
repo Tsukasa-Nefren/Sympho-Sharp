@@ -93,12 +93,12 @@ namespace Sympho.Functions
                 return;
             }
 
-            AudioPlayer.SetAllAudioFile(path, _plugin?.CVAR_Volume.Value ?? 1.0f);
+            Audio.PlayFromFile(path, _plugin?.CVAR_Volume.Value ?? 1.0f);
         }
 
         public static void StopAudio()
         {
-            AudioPlayer.SetAllAudioFile("");
+            Audio.PlayFromFile("");
         }
     }
 }
