@@ -11,13 +11,13 @@
 
 ## Requirement
 - [AudioPlayer](https://github.com/samyycX/AudioPlayer)
+- FFmpeg
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 
 ## Installation
 1. Drag all files into ``addons/counterstrikesharp/``
-2. Download and place ``yt-dlp`` binariy file ***(Depending your os, if Windows it with be .exe)*** into Sympho plugin folder.
-3. Set permission for both ``yt-dlp`` to 0764 or greater.
-4. Enjoy
+2. Install all requirement above.
+3. Enjoy
 
 ## Command
 - ``css_yt <url> [second_start]`` Playing youtube audio sound. (second_start is optional for setting which second of audio should start play)
