@@ -1,4 +1,5 @@
-﻿using CounterStrikeSharp.API.Core;
+﻿using CounterStrikeSharp.API;
+using CounterStrikeSharp.API.Core;
 using CounterStrikeSharp.API.Modules.Timers;
 
 namespace Sympho.Functions
@@ -6,7 +7,7 @@ namespace Sympho.Functions
     public class AntiSpamData
     {
         public static int PlayedCount = 0;
-        public static bool BlockPlay = false;
+        public static float AvailableAgain = 0f;
 
         public static int GetPlayedCount()
         { 
@@ -18,14 +19,14 @@ namespace Sympho.Functions
             PlayedCount = value;
         }
 
-        public static bool GetBlockStatus()
+        public static float GetCooldownLeft()
         {
-            return BlockPlay;
+            return AvailableAgain - Server.CurrentTime;
         }
 
-        public static void SetBlock(bool value)
+        public static void SetCooldown(float value)
         {
-            BlockPlay = value;
+            AvailableAgain = value;
         }
     }
 }

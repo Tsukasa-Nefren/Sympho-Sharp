@@ -27,9 +27,17 @@ namespace Sympho.Functions
         {
             var admin = AdminManager.PlayerHasPermissions(client, "@css/kick");
 
-            if(AntiSpamData.GetBlockStatus() && !admin)
+            if(AntiSpamData.GetCooldownLeft() > 0 && !admin)
             {
-                client.PrintToChat($" {_plugin?.Localizer["Prefix"]} {_plugin?.Localizer["AntiSpam.Cooldown"]}");
+                client.PrintToChat($" {_plugin?.Localizer["Prefix"]} {_plugin?.Localizer["AntiSpam.Cooldown", (int)AntiSpamData.GetCooldownLeft()]}");
+                return;
+            }
+
+            if(!admin && AntiSpamData.GetPlayedCount() >= _plugin?.Config.MaxSpamPerInterval)
+            {
+                AntiSpamData.SetCooldown(Server.CurrentTime + _plugin.Config.AntiSpamCooldown);
+                AntiSpamData.SetPlayedCount(0);
+                Server.PrintToChatAll($" {_plugin?.Localizer["Prefix"]} {_plugin?.Localizer["AntiSpam.StopByAntiSpam", _plugin.Config.AntiSpamCooldown]}");
                 return;
             }
 

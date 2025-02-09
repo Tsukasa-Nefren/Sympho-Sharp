@@ -85,9 +85,9 @@ namespace Sympho
                 }
             }
 
-            if(AntiSpamData.GetBlockStatus() && !admin)
+            if(AntiSpamData.GetCooldownLeft() > 0 && !admin)
             {
-                info.ReplyToCommand($" {Localizer["Prefix"]} {Localizer["AntiSpam.Cooldown"]}");
+                info.ReplyToCommand($" {Localizer["Prefix"]} {Localizer["AntiSpam.Cooldown", (int)AntiSpamData.GetCooldownLeft()]}");
                 return;
             }
 
@@ -245,36 +245,11 @@ namespace Sympho
         public void CheckSpam()
         {
             // if already blocked then do nothing.
-            if(AntiSpamData.BlockPlay)
-            {
+            if(AntiSpamData.AvailableAgain > Server.CurrentTime)
                 return;
-            }
-
-            // if played count reach limit then stop it.
-            if(AntiSpamData.GetPlayedCount() >= Config.MaxSpamPerInterval)
-            {
-                // stop sound
-                AudioHandler.StopAudio();
-
-                // set block to true
-                AntiSpamData.SetBlock(true);
-
-                // annoucne all player.
-                Server.PrintToChatAll($" {Localizer["Prefix"]} {Localizer["AntiSpam.StopByAntiSpam", Config.AntiSpamCooldown]}");
-
-                // Set timer for cooldown.
-                AddTimer(Config.AntiSpamCooldown, () => {
-                    AntiSpamData.SetBlock(false);
-                    AntiSpamData.SetPlayedCount(0);
-                    Server.PrintToChatAll($" {Localizer["Prefix"]} {Localizer["AntiSpam.CooldownEnd"]}");
-                });
-            }
 
             // just reset the played count.
-            else
-            {
-                AntiSpamData.SetPlayedCount(0);
-            }
+            AntiSpamData.SetPlayedCount(0);
         }
     }
 }
