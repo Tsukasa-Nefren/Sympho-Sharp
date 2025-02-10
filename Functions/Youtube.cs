@@ -77,6 +77,20 @@ namespace Sympho.Functions
                 return null;
             }
 
+            var newFileName = $"{DateTime.Now.Hour}_{DateTime.Now.Minute}_{DateTime.Now.Second}.mp3";
+            var newFilePath = Path.Combine(Path.GetDirectoryName(downloadFilePath)!, newFileName);
+
+            try
+            {
+                File.Move(downloadFilePath, newFilePath);
+                downloadFilePath = newFilePath;
+            }
+            catch (IOException ex)
+            {
+                _logger.LogError($"Error renaming file: {ex.Message}");
+                // Handle the exception as needed
+            }
+
             if(response.Success && startSec > 0)
             {
                 var trimmedFilePath = Path.Combine(Path.GetDirectoryName(downloadFilePath)!, Path.GetFileNameWithoutExtension(downloadFilePath) + "_trimmed" + Path.GetExtension(downloadFilePath));
@@ -85,7 +99,7 @@ namespace Sympho.Functions
                 return trimmedFilePath;
             }
 
-            return response.Data;
+            return downloadFilePath;
         }
 
         public async Task<VideoData> GetYoutubeInfo(string url)
