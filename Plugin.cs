@@ -109,6 +109,12 @@ namespace Sympho
 
             var url = splitArg[0];
 
+            if(!splitArg[0].StartsWith("https://www.youtube.com/"))
+            {
+                info.ReplyToCommand($" {Localizer["Prefix"]} Your didn't provide a link!");
+                return;
+            }
+
             // if normal player then
             if(!admin)
                 AntiSpamData.SetPlayedCount(AntiSpamData.PlayedCount + 1);
