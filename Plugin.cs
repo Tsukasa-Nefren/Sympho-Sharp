@@ -91,6 +91,12 @@ namespace Sympho
                 return;
             }
 
+            if(Youtube.IsPlaying && Audio.IsAllPlaying())
+            {
+                info.ReplyToCommand($" {Localizer["Prefix"]} {Localizer["Youtube.WaitForFinish"]}");
+                return;
+            }
+
             var fullarg = info.ArgString;
             var splitArg = fullarg.Split(" ");
             bool start = false;

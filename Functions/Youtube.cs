@@ -13,6 +13,7 @@ namespace Sympho.Functions
         private AudioHandler _audioHandler;
         private string? _ytdlp;
         private readonly ILogger<Sympho> _logger;
+        public static bool IsPlaying = false;
         
         public Youtube(Sympho plugin, AudioHandler audioHandler, ILogger<Sympho> logger)
         {
@@ -44,6 +45,7 @@ namespace Sympho.Functions
             if (audiopath != null)
             {
                 Server.NextFrame(() => {
+                    IsPlaying = true;
                     _audioHandler.PlayAudio(audiopath);
                     // Server.PrintToChatAll($" {ChatColors.Default}[{ChatColors.Lime}Sympho{ChatColors.Default}] Youtube Title: {audioData.Title} | Duration: {durationFormat} | Author: {audioData.Uploader}");
 

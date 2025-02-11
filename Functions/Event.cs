@@ -57,6 +57,12 @@ namespace Sympho.Functions
             if(client == null)
                 return HookResult.Continue;
 
+            if(Youtube.IsPlaying && Audio.IsAllPlaying())
+            {
+                client.PrintToChat($" {_plugin?.Localizer["Prefix"]} {_plugin?.Localizer["Youtube.WaitForFinish"]}");
+                return HookResult.Continue;
+            }
+
             var message = @event.Text;
 
             var split = message.Split(' ');
@@ -65,6 +71,9 @@ namespace Sympho.Functions
             var param2 = split.Length > 1 ? split[1] : string.Empty;
 
             var isIndex = int.TryParse(param2, out int index);
+
+            if(Youtube.IsPlaying)
+                Youtube.IsPlaying = false;
 
             if (isIndex)
             {
