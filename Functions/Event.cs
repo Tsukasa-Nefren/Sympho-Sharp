@@ -6,6 +6,7 @@ using static CounterStrikeSharp.API.Core.Listeners;
 using System.Runtime;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Modules.Timers;
+using CounterStrikeSharp.API.Modules.Memory;
 
 namespace Sympho.Functions
 {
@@ -57,13 +58,13 @@ namespace Sympho.Functions
             if(client == null)
                 return HookResult.Continue;
 
-            if(Youtube.IsPlaying && Audio.IsAllPlaying())
-            {
-                client.PrintToChat($" {_plugin?.Localizer["Prefix"]} {_plugin?.Localizer["Youtube.WaitForFinish"]}");
-                return HookResult.Continue;
-            }
-
             var message = @event.Text;
+
+            if(!message.StartsWith("!"))
+                return HookResult.Continue;
+
+            if(message.Contains("!stopall"))
+                return HookResult.Continue;
 
             var split = message.Split(' ');
 
@@ -71,9 +72,6 @@ namespace Sympho.Functions
             var param2 = split.Length > 1 ? split[1] : string.Empty;
 
             var isIndex = int.TryParse(param2, out int index);
-
-            if(Youtube.IsPlaying)
-                Youtube.IsPlaying = false;
 
             if (isIndex)
             {

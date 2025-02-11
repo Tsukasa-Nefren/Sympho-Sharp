@@ -50,9 +50,6 @@ namespace Sympho.Functions
             // null or there is no audio in list.
             if (_audio.AudioList == null || _audio.AudioList.Count <= 0) return;
 
-            // if it's got blocked
-
-
             // index always start with 0 but since we receive command from player who start count '1'
             if (specific)
                 soundIndex -= 1;
@@ -61,14 +58,13 @@ namespace Sympho.Functions
             else
                 soundIndex = 0;
 
-            // get an main array index of 'audioList'
-            var index = _plugin!.GetAudioIndex(command);
+            var audioData = _audio.AudioList.Where(p => p.name != null && p.name.Contains(command)).FirstOrDefault();
 
-            // -1 mean not found
-            if (index == -1) return;
+            if(audioData == null)
+                return;
 
             // in case there is only 1 sound
-            if (_audio.AudioList[index].sounds!.Count <= 1)
+            if (audioData.sounds?.Count <= 1)
             {
                 soundIndex = 0;
             }
@@ -80,12 +76,20 @@ namespace Sympho.Functions
                 if (!specific)
                 {
                     var random = new Random();
-                    soundIndex = random.Next(0, _audio.AudioList[index].sounds!.Count);
+                    soundIndex = random.Next(0, audioData.sounds!.Count);
                 }
             }
 
+            if(Youtube.IsPlaying && Audio.IsAllPlaying())
+            {
+                client.PrintToChat($" {_plugin?.Localizer["Prefix"]} {_plugin?.Localizer["Youtube.WaitForFinish"]}");
+                return;
+            }
+
+            Youtube.IsPlaying = false;
+
             // combine path of sound file
-            var soundPath = Path.Combine(_audio.PluginDirectory!, $"sounds/{_audio.AudioList[index].sounds![soundIndex]}");
+            var soundPath = Path.Combine(_audio.PluginDirectory!, $"sounds/{audioData.sounds![soundIndex]}");
 
             PlayAudio(soundPath);
 
@@ -106,7 +110,7 @@ namespace Sympho.Functions
 
         public static void StopAudio()
         {
-            Audio.PlayFromFile("");
+            Audio.StopAllPlaying();
         }
     }
 }
