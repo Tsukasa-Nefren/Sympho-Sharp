@@ -91,6 +91,8 @@ namespace Sympho.Functions
         {
             ClearTempFiles();
 
+            AntiSpamData.AvailableAgain = 0;
+
             if (_plugin?.Config.EnableAntiSpam ?? false)
             {
                 _plugin.SpamTimerCheck = _plugin.AddTimer(_plugin.Config.SpamCheckInterval, () => {
