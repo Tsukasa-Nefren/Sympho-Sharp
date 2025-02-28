@@ -10,7 +10,7 @@
 
 
 ## Requirement
-- [AudioPlayer](https://github.com/samyycX/AudioPlayer)
+- [AudioPlayer](https://github.com/oylsister/AudioPlayer)
 - FFmpeg
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp)
 
