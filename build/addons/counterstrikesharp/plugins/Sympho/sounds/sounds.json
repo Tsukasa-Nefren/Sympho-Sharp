@@ -2,5 +2,17 @@
     {
         "name": [ "!tuturu", "!tutu" ],
         "sounds": [ "tuturu.wav" ]
+    },
+    {
+        "name": [ "!oyl" ],
+        "sounds": [ "oyl/grenade.mp3", "oyl/yabai.mp3" ]
+    },
+    {
+        "name": [ "!ayaya" ],
+        "sounds": [ "ayaya 1.mp3", "ayaya 2.mp3", "ayaya 3.mp3", "ayaayaya.mp3" ]
+    },
+    {
+        "name": [ "!rine" ],
+        "sounds": [ "rine.mp3" ]
     }
 ]
