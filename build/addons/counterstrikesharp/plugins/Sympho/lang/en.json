@@ -3,7 +3,11 @@
     "Youtube.NotAllowed": "You cannot use this feature right now.",
     "Youtube.Info": "Video Title: {0} | Duration: {1} | Uploader: {2}",
     "Audio.AllStop": "All audio has been stopped playing.",
-    "AntiSpam.Cooldown": "This feature is currently in cooldown now",
+    "AntiSpam.Cooldown": "This feature will available again in {0} seconds.",
     "AntiSpam.StopByAntiSpam": "Cooldown is triggered, all sound will become available again in {0} seconds.",
-    "AntiSpam.CooldownEnd": "Cooldown period is over."
+    "AntiSpam.CooldownEnd": "Cooldown period is over.",
+    "Search.NoResult": "There is no result found for your search.",
+    "Search.Result": "Found:",
+    "Search.MoreResult": "More {0} results that are not shown.",
+    "Youtube.WaitForFinish": "Currently Youtube Sound is playing, please try again after it's finished."
 }

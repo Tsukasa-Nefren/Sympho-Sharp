@@ -6,6 +6,7 @@ using static CounterStrikeSharp.API.Core.Listeners;
 using System.Runtime;
 using CounterStrikeSharp.API;
 using CounterStrikeSharp.API.Modules.Timers;
+using CounterStrikeSharp.API.Modules.Memory;
 
 namespace Sympho.Functions
 {
@@ -59,6 +60,12 @@ namespace Sympho.Functions
 
             var message = @event.Text;
 
+            if(!message.StartsWith("!"))
+                return HookResult.Continue;
+
+            if(message.Contains("!stopall"))
+                return HookResult.Continue;
+
             var split = message.Split(' ');
 
             var param1 = split.Length > 0 ? split[0] : string.Empty;
@@ -83,6 +90,8 @@ namespace Sympho.Functions
         public void OnMapStart(string mapname)
         {
             ClearTempFiles();
+
+            AntiSpamData.AvailableAgain = 0;
 
             if (_plugin?.Config.EnableAntiSpam ?? false)
             {

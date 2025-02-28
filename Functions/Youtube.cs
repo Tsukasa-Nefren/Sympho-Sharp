@@ -1,10 +1,6 @@
-﻿using System.Drawing;
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using CounterStrikeSharp.API;
-using CounterStrikeSharp.API.Modules.Utils;
 using Microsoft.Extensions.Logging;
-using Serilog.Core;
-using Sympho.Models;
 using YoutubeDLSharp;
 using YoutubeDLSharp.Metadata;
 using YoutubeDLSharp.Options;
@@ -15,9 +11,9 @@ namespace Sympho.Functions
     {
         private Sympho? _plugin;
         private AudioHandler _audioHandler;
-        private string? _ffmpeg;
         private string? _ytdlp;
         private readonly ILogger<Sympho> _logger;
+        public static bool IsPlaying = false;
         
         public Youtube(Sympho plugin, AudioHandler audioHandler, ILogger<Sympho> logger)
         {
@@ -30,13 +26,11 @@ namespace Sympho.Functions
         {
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
             {
-                _ffmpeg = "ffmpeg";
                 _ytdlp = "yt-dlp";
             }
 
             else
             {
-                _ffmpeg = "ffmpeg.exe";
                 _ytdlp = "yt-dlp.exe";
             }
         }
@@ -51,6 +45,7 @@ namespace Sympho.Functions
             if (audiopath != null)
             {
                 Server.NextFrame(() => {
+                    IsPlaying = true;
                     _audioHandler.PlayAudio(audiopath);
                     // Server.PrintToChatAll($" {ChatColors.Default}[{ChatColors.Lime}Sympho{ChatColors.Default}] Youtube Title: {audioData.Title} | Duration: {durationFormat} | Author: {audioData.Uploader}");
 
@@ -70,14 +65,7 @@ namespace Sympho.Functions
 
             var ytdl = new YoutubeDL();
 
-            ytdl.YoutubeDLPath = Path.Combine(_plugin!.ModuleDirectory, _ytdlp!);
-
-            if(!File.Exists(Path.Combine(_plugin!.ModuleDirectory, _ytdlp!)))
-            {
-                _logger.LogError("Couldn't find yt-dlp path!");
-                return null;
-            }
-
+            ytdl.YoutubeDLPath = "yt-dlp";
             _logger.LogInformation("Proceeding Downloading");
 
             ytdl.OutputFolder = dest;
@@ -87,8 +75,27 @@ namespace Sympho.Functions
 
             if(!response.Success)
             {
+                foreach(var errorlog in response.ErrorOutput)
+                {
+                    _logger.LogError("Error: {log}", errorlog);
+                }
+
                 _logger.LogError("Couldn't download the file!");
                 return null;
+            }
+
+            var newFileName = $"{DateTime.Now.Hour}_{DateTime.Now.Minute}_{DateTime.Now.Second}.mp3";
+            var newFilePath = Path.Combine(Path.GetDirectoryName(downloadFilePath)!, newFileName);
+
+            try
+            {
+                File.Move(downloadFilePath, newFilePath);
+                downloadFilePath = newFilePath;
+            }
+            catch (IOException ex)
+            {
+                _logger.LogError($"Error renaming file: {ex.Message}");
+                // Handle the exception as needed
             }
 
             if(response.Success && startSec > 0)
@@ -99,7 +106,7 @@ namespace Sympho.Functions
                 return trimmedFilePath;
             }
 
-            return response.Data;
+            return downloadFilePath;
         }
 
         public async Task<VideoData> GetYoutubeInfo(string url)
