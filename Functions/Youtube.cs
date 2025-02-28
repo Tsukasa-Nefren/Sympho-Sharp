@@ -75,6 +75,11 @@ namespace Sympho.Functions
 
             if(!response.Success)
             {
+                foreach(var errorlog in response.ErrorOutput)
+                {
+                    _logger.LogError("Error: {log}", errorlog);
+                }
+
                 _logger.LogError("Couldn't download the file!");
                 return null;
             }
