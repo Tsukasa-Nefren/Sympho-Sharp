@@ -28,6 +28,7 @@ namespace Sympho
         public Settings Config { get; set; } = new();
         public CounterStrikeSharp.API.Modules.Timers.Timer? SpamTimerCheck = null;
         public FakeConVar<float> CVAR_Volume = new FakeConVar<float>("css_sympho_volume", "Volume of Sympho sound", 1.0f, ConVarFlags.FCVAR_NONE, new RangeValidator<float>(0.1f, 1.0f));
+        public static bool AllowPlaying = true;
 
         public Sympho(ILogger<Sympho> logger)
         {
@@ -61,6 +62,12 @@ namespace Sympho
         [ConsoleCommand("css_yt")]
         public void YoutubeCommand(CCSPlayerController client, CommandInfo info)
         {
+            if(!AllowPlaying)
+            {
+                info.ReplyToCommand($" {Localizer["Prefix"]} {Localizer["Audio.Disabled"]}");
+                return;
+            }
+
             bool allow = true;
             bool admin = AdminManager.PlayerHasPermissions(client, "@css/kick");
 
@@ -150,6 +157,66 @@ namespace Sympho
                 Server.PrintToChatAll($" {Localizer["Prefix"]} {Localizer["Audio.AllStop"]}");
                 AudioHandler.StopAudio();
             }
+        }
+
+        [RequiresPermissions("@css/kick")]
+        [ConsoleCommand("css_togglesympho")]
+        public void ToggleSymphoCommand(CCSPlayerController client, CommandInfo info)
+        {
+            if (Audio.IsAllPlaying())
+            {
+                //Server.PrintToChatAll($" {Localizer["Prefix"]} {Localizer["Audio.AllStop"]}");
+                AudioHandler.StopAudio();
+            }
+
+            AllowPlaying = !AllowPlaying;
+            Server.PrintToChatAll($" {Localizer["Prefix"]} {(AllowPlaying ? Localizer["Audio.Enabled"] : Localizer["Audio.Disabled"])}");
+        }
+
+        [ConsoleCommand("css_sm")]
+        public void MuteSymphoCommand(CCSPlayerController client, CommandInfo info)
+        {
+            if(client == null)
+                return;
+
+            if(info.ArgCount > 1)
+            {
+                var name = info.ArgString;
+
+                if(!name.StartsWith("sym", StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+
+            else
+                return;
+
+            info.ReplyToCommand($"  {Localizer["Prefix"]} {Localizer["Audio.SelfMute"]}");
+            Audio.SetPlayerHearing(client.Slot, false);
+        }
+
+        [ConsoleCommand("css_su")]
+        public void UnmuteSymphoCommand(CCSPlayerController client, CommandInfo info)
+        {
+            if(client == null)
+                return;
+
+            if(info.ArgCount > 1)
+            {
+                var name = info.ArgString;
+
+                if(!name.StartsWith("sym", StringComparison.OrdinalIgnoreCase))
+                {
+                    return;
+                }
+            }
+
+            else
+                return;
+                
+            info.ReplyToCommand($"  {Localizer["Prefix"]} {Localizer["Audio.SelfUnmute"]}");
+            Audio.SetPlayerHearing(client.Slot, true);
         }
 
         [ConsoleCommand("css_search")]

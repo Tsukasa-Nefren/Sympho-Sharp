@@ -80,6 +80,12 @@ namespace Sympho.Functions
                 }
             }
 
+            if(!Sympho.AllowPlaying)
+            {
+                client.PrintToChat($" {_plugin?.Localizer["Prefix"]} {_plugin?.Localizer["Audio.Disabled"]}");
+                return;
+            }
+
             if(Youtube.IsPlaying && Audio.IsAllPlaying())
             {
                 client.PrintToChat($" {_plugin?.Localizer["Prefix"]} {_plugin?.Localizer["Youtube.WaitForFinish"]}");
