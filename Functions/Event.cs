@@ -37,11 +37,18 @@ namespace Sympho.Functions
 
             _plugin.RegisterEventHandler<EventPlayerChat>(OnPlayerChat);
             _plugin.RegisterListener<OnMapStart>(OnMapStart);
+            _plugin.RegisterListener<OnClientDisconnect>(OnClientDisconnect);
         }
 
         public void InitialConfigs(Settings settings)
         {
             _settings = settings;
+        }
+
+        // no matter what they do, we will always set their hearing back to true.
+        public void OnClientDisconnect(int playerslot)
+        {
+            Audio.SetPlayerHearing(playerslot, true);
         }
 
         public HookResult OnPlayerChat(EventPlayerChat @event, GameEventInfo info)
