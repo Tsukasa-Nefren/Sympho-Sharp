@@ -58,7 +58,7 @@ namespace Sympho.Functions
             else
                 soundIndex = 0;
 
-            var audioData = _audio.AudioList.Where(p => p.name != null && p.name.Contains(command)).FirstOrDefault();
+            var audioData = _audio.AudioList.Find(p => p.name != null && p.name.Contains(command));
 
             if(audioData == null)
                 return;
@@ -98,6 +98,7 @@ namespace Sympho.Functions
             var soundPath = Path.Combine(_audio.PluginDirectory!, $"sounds/{audioData.sounds![soundIndex]}");
 
             PlayAudio(soundPath);
+            AntiSpamData.SetCooldown(Server.CurrentTime + 8f);
 
             if(!admin)
                 AntiSpamData.SetPlayedCount(AntiSpamData.PlayedCount + 1);
