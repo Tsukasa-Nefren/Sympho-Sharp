@@ -65,48 +65,60 @@ namespace Sympho.Functions
 
             var ytdl = new YoutubeDL();
 
-            ytdl.YoutubeDLPath = "yt-dlp";
+            ytdl.YoutubeDLPath = Path.Combine(_plugin!.ModuleDirectory, _ytdlp!);
             _logger.LogInformation("Proceeding Downloading");
 
             ytdl.OutputFolder = dest;
 
-            var response = await ytdl.RunAudioDownload(url, AudioConversionFormat.Mp3);
-            var downloadFilePath = response.Data;
-
-            if(!response.Success)
-            {
-                foreach(var errorlog in response.ErrorOutput)
-                {
-                    _logger.LogError("Error: {log}", errorlog);
-                }
-
-                _logger.LogError("Couldn't download the file!");
-                return null;
-            }
-
-            var newFileName = $"{DateTime.Now.Hour}_{DateTime.Now.Minute}_{DateTime.Now.Second}.mp3";
-            var newFilePath = Path.Combine(Path.GetDirectoryName(downloadFilePath)!, newFileName);
+            string downloadFilePath = string.Empty;
 
             try
             {
-                File.Move(downloadFilePath, newFilePath);
-                downloadFilePath = newFilePath;
+                var response = await ytdl.RunAudioDownload(url, AudioConversionFormat.Mp3);
+                downloadFilePath = response.Data;
+
+                if (!response.Success)
+                {
+                    foreach (var errorlog in response.ErrorOutput)
+                    {
+                        _logger.LogError("Error: {log}", errorlog);
+                    }
+
+                    _logger.LogError("Couldn't download the file!");
+                    return null;
+                }
+
+                var newFileName = $"{DateTime.Now.Hour}_{DateTime.Now.Minute}_{DateTime.Now.Second}.mp3";
+                var newFilePath = Path.Combine(Path.GetDirectoryName(downloadFilePath)!, newFileName);
+
+                try
+                {
+                    File.Move(downloadFilePath, newFilePath);
+                    downloadFilePath = newFilePath;
+                }
+                catch (IOException ex)
+                {
+                    _logger.LogError($"Error renaming file: {ex.Message}");
+                    // Handle the exception as needed
+                    return null;
+                }
+
+                if(response.Success && startSec > 0)
+                {
+                    var trimmedFilePath = Path.Combine(Path.GetDirectoryName(downloadFilePath)!, Path.GetFileNameWithoutExtension(downloadFilePath) + "_trimmed" + Path.GetExtension(downloadFilePath));
+
+                    await TrimAudioAsync(downloadFilePath, trimmedFilePath, startSec, duration);
+                    return trimmedFilePath;
+                }
+
+                return downloadFilePath;
             }
-            catch (IOException ex)
+
+            catch (Exception ex)
             {
-                _logger.LogError($"Error renaming file: {ex.Message}");
-                // Handle the exception as needed
+                _logger.LogError("An error occurred while downloading the video: {Message}", ex.Message);
+                return null;
             }
-
-            if(response.Success && startSec > 0)
-            {
-                var trimmedFilePath = Path.Combine(Path.GetDirectoryName(downloadFilePath)!, Path.GetFileNameWithoutExtension(downloadFilePath) + "_trimmed" + Path.GetExtension(downloadFilePath));
-
-                await TrimAudioAsync(downloadFilePath, trimmedFilePath, startSec, duration);
-                return trimmedFilePath;
-            }
-
-            return downloadFilePath;
         }
 
         public async Task<VideoData> GetYoutubeInfo(string url)
