@@ -5,13 +5,145 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-	  <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+
+    <!-- 참조 DLL을 출력 폴더로 복사 -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+
+    <!-- 단일파일/트리밍 미사용 -->
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishTrimmed>false</PublishTrimmed>
+
+    <!-- 다운로드 URL -->
+    <YtDlpUrl>https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe</YtDlpUrl>
+    <FfmpegZipUrl>https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip</FfmpegZipUrl>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="CounterStrikeSharp.API" Version="1.0.300" />
+    <!-- CSS API는 서버에서 제공 → 런타임 복사 제외 -->
+    <PackageReference Include="CounterStrikeSharp.API" Version="1.0.337">
+      <ExcludeAssets>runtime</ExcludeAssets>
+    </PackageReference>
+
+    <!-- 필요한 외부 라이브러리 -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="YoutubeDLSharp" Version="1.1.2" />
   </ItemGroup>
+
+  <!-- 리소스 복사 규칙 (프로젝트 루트의 파일을 빌드 출력으로 복사) -->
+  <ItemGroup>
+    <Content Include="lang\**\*">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </Content>
+    <Content Include="sounds\**\*">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+      <CopyToPublishDirectory>Always</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!-- 1) 빌드 전에 PowerShell 스크립트 파일 생성 (출력 폴더에서 동작) -->
+  <Target Name="PrepareToolsScript" BeforeTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+    <PropertyGroup>
+      <ToolsPs1>$(IntermediateOutputPath)download-tools.ps1</ToolsPs1>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <Ps1Lines Include="$ErrorActionPreference = 'Stop'" />
+      <Ps1Lines Include="[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12" />
+      <Ps1Lines Include="$ToolsDir = (Get-Location).ProviderPath" />
+      <Ps1Lines Include="Write-Host (&quot;[FetchTools] ToolsDir: {0}&quot; -f $ToolsDir)" />
+      <Ps1Lines Include="if (!(Test-Path $ToolsDir)) { New-Item -ItemType Directory -Path $ToolsDir | Out-Null }" />
+      <Ps1Lines Include="$yt  = Join-Path $ToolsDir 'yt-dlp.exe'" />
+      <Ps1Lines Include="$ff  = Join-Path $ToolsDir 'ffmpeg.exe'" />
+      <Ps1Lines Include="$zip = Join-Path $ToolsDir 'ffmpeg.zip'" />
+      <Ps1Lines Include="$unz = Join-Path $ToolsDir 'ffmpeg_zip'" />
+      <Ps1Lines Include="try { if (!(Test-Path $yt)) { Invoke-WebRequest -Uri '$(YtDlpUrl)'   -OutFile $yt  -UseBasicParsing } } catch { Write-Host (&quot;[FetchTools] yt-dlp warn: {0}&quot; -f $_.Exception.Message) }" />
+      <Ps1Lines Include="try {" />
+      <Ps1Lines Include="  if (!(Test-Path $ff)) {" />
+      <Ps1Lines Include="    if (Test-Path $unz) { Remove-Item $unz -Recurse -Force }" />
+      <Ps1Lines Include="    if (Test-Path $zip) { Remove-Item $zip -Force }" />
+      <Ps1Lines Include="    Invoke-WebRequest -Uri '$(FfmpegZipUrl)' -OutFile $zip -UseBasicParsing" />
+      <Ps1Lines Include="    Add-Type -AssemblyName System.IO.Compression.FileSystem" />
+      <Ps1Lines Include="    [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $unz)" />
+      <Ps1Lines Include="    $found = Get-ChildItem $unz -Recurse -Filter ffmpeg.exe | Select-Object -First 1" />
+      <Ps1Lines Include="    if ($found) { Copy-Item $found.FullName $ff -Force } else { Write-Host '[FetchTools] ffmpeg.exe not found in zip' }" />
+      <Ps1Lines Include="    if (Test-Path $zip) { Remove-Item $zip -Force }" />
+      <Ps1Lines Include="    if (Test-Path $unz) { Remove-Item $unz -Recurse -Force }" />
+      <Ps1Lines Include="  }" />
+      <Ps1Lines Include="} catch { Write-Host (&quot;[FetchTools] ffmpeg warn: {0}&quot; -f $_.Exception.Message) }" />
+    </ItemGroup>
+
+    <WriteLinesToFile File="$(ToolsPs1)" Lines="@(Ps1Lines)" Overwrite="true" />
+  </Target>
+
+  <!-- 2) 빌드 후 스크립트 실행 (PS1 '절대경로'로 호출) -->
+  <Target Name="DownloadToolsAfterBuild" AfterTargets="Build" DependsOnTargets="PrepareToolsScript" Condition="'$(OS)' == 'Windows_NT'">
+    <PropertyGroup>
+      <ToolsPs1Full>$(MSBuildProjectDirectory)\$(IntermediateOutputPath)download-tools.ps1</ToolsPs1Full>
+    </PropertyGroup>
+
+    <Exec
+      WorkingDirectory="$(TargetDir)"
+      IgnoreExitCode="true"
+      Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(ToolsPs1Full)&quot;" />
+  </Target>
+
+  <!-- 3) 출력 폴더에 필수 디렉터리 강제 생성 -->
+  <Target Name="EnsureOutputDirs" AfterTargets="Build" DependsOnTargets="DownloadToolsAfterBuild">
+    <MakeDir Directories="$(TargetDir)sounds" />
+    <MakeDir Directories="$(TargetDir)lang" />
+    <MakeDir Directories="$(TargetDir)tmp" />
+  </Target>
+
+  <!-- 4) 빌드 산출물 정리 Target을 주석 처리하여 파일이 삭제되지 않도록 합니다. -->
+  <!--
+  <Target Name="PruneBuildOutput"
+          AfterTargets="Build"
+          DependsOnTargets="EnsureOutputDirs">
+    <ItemGroup>
+      <AllBuilt Include="$(TargetDir)**\*.*" />
+      <KeepFiles Include="
+        $(TargetDir)*.dll;
+        $(TargetDir)*.exe;
+        $(TargetDir)*.json;
+        $(TargetDir)*.deps.json;
+        $(TargetDir)*.runtimeconfig.json;
+        $(TargetDir)*.pdb;
+        $(TargetDir)sounds\**\*;
+        $(TargetDir)lang\**\*
+      " />
+      <ToDelete Include="@(AllBuilt)" Exclude="@(KeepFiles)" />
+    </ItemGroup>
+    <Delete Files="@(ToDelete)" />
+  </Target>
+  -->
+  
+  <!-- 5) 자동 배포 Target도 주석 처리된 상태로 둡니다. -->
+  <!--
+  <Target Name="DeployToServer"
+          AfterTargets="Build"
+          DependsOnTargets="PruneBuildOutput">
+    ...
+  </Target>
+  -->
+
+  <!-- 6) 퍼블리시 산출물 정리 (선택) -->
+  <Target Name="PrunePublishOutput" AfterTargets="Publish">
+    <ItemGroup>
+      <AllPub Include="$(PublishDir)**\*.*" />
+      <KeepFilesPub Include="
+        $(PublishDir)*.dll;
+        $(PublishDir)*.exe;
+        $(PublishDir)*.json;
+        $(PublishDir)*.deps.json;
+        $(PublishDir)*.runtimeconfig.json;
+        $(PublishDir)*.pdb;
+        $(PublishDir)sounds\**\*;
+        $(PublishDir)lang\**\*
+      " />
+      <ToDeletePub Include="@(AllPub)" Exclude="@(KeepFilesPub)" />
+    </ItemGroup>
+    <Delete Files="@(ToDeletePub)" />
+  </Target>
 
 </Project>
