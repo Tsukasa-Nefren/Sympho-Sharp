@@ -1,5 +1,13 @@
-﻿using System.Runtime.InteropServices;
+﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using CounterStrikeSharp.API;
+using CounterStrikeSharp.API.Core;
 using Microsoft.Extensions.Logging;
 using YoutubeDLSharp;
 using YoutubeDLSharp.Metadata;
@@ -10,152 +18,115 @@ namespace Sympho.Functions
     public class Youtube
     {
         private Sympho? _plugin;
-        private AudioHandler _audioHandler;
-        private string? _ytdlp;
+        private readonly AudioHandler _audioHandler;
+        private readonly Subtitles _subs;
         private readonly ILogger<Sympho> _logger;
+        private string? _ytdlp;
         public static bool IsPlaying = false;
-        
-        public Youtube(Sympho plugin, AudioHandler audioHandler, ILogger<Sympho> logger)
+
+        public Youtube(AudioHandler audioHandler, Subtitles subs, ILogger<Sympho> logger)
         {
-            _plugin = plugin;
             _audioHandler = audioHandler;
+            _subs = subs;
             _logger = logger;
         }
 
-        public void Initialize()
+        public void Initialize(Sympho plugin)
         {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-            {
-                _ytdlp = "yt-dlp";
-            }
-
-            else
-            {
-                _ytdlp = "yt-dlp.exe";
-            }
+            _plugin = plugin;
+            _ytdlp = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "yt-dlp.exe" : "yt-dlp";
         }
 
-        public async Task ProceedYoutubeVideo(string url, int startSec = 0, int duration = 0)
+        public async Task<string?> ProceedYoutubeVideo(string url, int startSec = 0, int duration = 0)
         {
-            var audiopath = await DownloadYoutubeVideo(url, startSec, duration);
-            var audioData = await GetYoutubeInfo(url);
+            var audiopath = await DownloadYoutubeVideo(url);
+            if (audiopath == null) return null;
 
-            var durationFormat = TimeSpan.FromSeconds((double)audioData.Duration!).ToString(@"hh\:mm\:ss");
+            var cues = await _subs.FetchAndParseSubtitlesAsync(url);
 
-            if (audiopath != null)
+            var info = await GetYoutubeInfo(url);
+            var durationFormat = TimeSpan.FromSeconds((double)(info.Duration ?? 0)).ToString(@"hh\:mm\:ss");
+            var trimmedAudioPath = await EnsureTrimmedIfNeeded(audiopath, startSec, duration);
+            
+            Server.NextFrame(() =>
             {
-                Server.NextFrame(() => {
-                    IsPlaying = true;
-                    _audioHandler.PlayAudio(audiopath);
-                    // Server.PrintToChatAll($" {ChatColors.Default}[{ChatColors.Lime}Sympho{ChatColors.Default}] Youtube Title: {audioData.Title} | Duration: {durationFormat} | Author: {audioData.Uploader}");
+                if (!IsPlaying) return;
+                _audioHandler.PlayAudio(trimmedAudioPath);
+                Server.PrintToChatAll($" {_plugin?.Localizer["Prefix"]} {_plugin?.Localizer["Youtube.Info", info.Title, durationFormat, info.Uploader]}");
+                
+                if (cues != null && cues.Count > 0)
+                {
+                    _subs.StartRealtimeSubtitles(cues);
+                }
+            });
 
-                    Server.PrintToChatAll($" {_plugin?.Localizer["Prefix"]} {_plugin?.Localizer["Youtube.Info", audioData.Title, durationFormat, audioData.Uploader]}");
-                });
-            }
+            return trimmedAudioPath;
         }
 
-        public async Task<string?> DownloadYoutubeVideo(string url, int startSec = 0, int duration = 0)
+        public async Task<string?> DownloadYoutubeVideo(string url)
         {
-            var dest = Path.Combine(_plugin!.ModuleDirectory, "temp");
-
-            if (!Directory.Exists(dest))
+            var dest = Path.Combine(_plugin!.ModuleDirectory, "tmp");
+            Directory.CreateDirectory(dest);
+            var videoId = GetYouTubeVideoId(url);
+            if (string.IsNullOrEmpty(videoId)) { _logger.LogError("Could not extract video ID from URL: {0}", url); return null; }
+            var targetPath = Path.Combine(dest, $"{videoId}.mp3");
+            if (File.Exists(targetPath)) { _logger.LogInformation("Using cached audio file: {0}", targetPath); return targetPath; }
+            var ytdl = new YoutubeDL { YoutubeDLPath = Path.Combine(_plugin!.ModuleDirectory, _ytdlp!) };
+            var opts = new OptionSet { Output = Path.Combine(dest, "%(id)s.%(ext)s"), RestrictFilenames = true, ExtractAudio = true, AudioFormat = AudioConversionFormat.Mp3, NoMtime = true, IgnoreConfig = true, NoCheckCertificates = true };
+            
+            _logger.LogInformation("Downloading audio for {url}...", url);
+            var response = await ytdl.RunAudioDownload(url, AudioConversionFormat.Mp3, overrideOptions: opts);
+            if (!response.Success) { foreach (var e in response.ErrorOutput) _logger.LogError("yt-dlp: {msg}", e); return null; }
+            
+            var downloadedPath = response.Data;
+            if (!string.Equals(Path.GetFullPath(downloadedPath), Path.GetFullPath(targetPath), StringComparison.OrdinalIgnoreCase))
             {
-                Directory.CreateDirectory(dest);
+                try { if (File.Exists(targetPath)) File.Delete(targetPath); File.Move(downloadedPath, targetPath); return targetPath; }
+                catch (Exception ex) { _logger.LogError(ex, "Failed to rename downloaded file."); }
             }
+            return downloadedPath;
+        }
 
-            var ytdl = new YoutubeDL();
+        private async Task<string> EnsureTrimmedIfNeeded(string sourcePath, int startSec, int duration)
+        {
+            if (startSec <= 0) return sourcePath;
+            var destDir = Path.GetDirectoryName(sourcePath)!;
+            var fileName = Path.GetFileNameWithoutExtension(sourcePath);
+            var trimmedPath = Path.Combine(destDir, $"{fileName}_trimmed_{startSec}.mp3");
+            if (File.Exists(trimmedPath)) return trimmedPath;
+            await TrimAudioAsync(sourcePath, trimmedPath, startSec, duration);
+            return File.Exists(trimmedPath) ? trimmedPath : sourcePath;
+        }
 
-            ytdl.YoutubeDLPath = Path.Combine(_plugin!.ModuleDirectory, _ytdlp!);
-            _logger.LogInformation("Proceeding Downloading");
-
-            ytdl.OutputFolder = dest;
-
-            string downloadFilePath = string.Empty;
-
+        private async Task TrimAudioAsync(string src, string dest, int start, int duration)
+        {
             try
             {
-                var response = await ytdl.RunAudioDownload(url, AudioConversionFormat.Mp3);
-                downloadFilePath = response.Data;
-
-                if (!response.Success)
-                {
-                    foreach (var errorlog in response.ErrorOutput)
-                    {
-                        _logger.LogError("Error: {log}", errorlog);
-                    }
-
-                    _logger.LogError("Couldn't download the file!");
-                    return null;
-                }
-
-                var newFileName = $"{DateTime.Now.Hour}_{DateTime.Now.Minute}_{DateTime.Now.Second}.mp3";
-                var newFilePath = Path.Combine(Path.GetDirectoryName(downloadFilePath)!, newFileName);
-
-                try
-                {
-                    File.Move(downloadFilePath, newFilePath);
-                    downloadFilePath = newFilePath;
-                }
-                catch (IOException ex)
-                {
-                    _logger.LogError($"Error renaming file: {ex.Message}");
-                    // Handle the exception as needed
-                    return null;
-                }
-
-                if(response.Success && startSec > 0)
-                {
-                    var trimmedFilePath = Path.Combine(Path.GetDirectoryName(downloadFilePath)!, Path.GetFileNameWithoutExtension(downloadFilePath) + "_trimmed" + Path.GetExtension(downloadFilePath));
-
-                    await TrimAudioAsync(downloadFilePath, trimmedFilePath, startSec, duration);
-                    return trimmedFilePath;
-                }
-
-                return downloadFilePath;
+                var ffmpeg = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "ffmpeg.exe" : "ffmpeg";
+                var args = new List<string> { "-y", "-i", src, "-vn", "-acodec", "copy" };
+                if (start > 0) args.AddRange(new[] { "-ss", start.ToString() });
+                if (duration > 0) args.AddRange(new[] { "-t", duration.ToString() });
+                args.Add(dest);
+                var startInfo = new ProcessStartInfo { FileName = ffmpeg, Arguments = string.Join(" ", args), UseShellExecute = false, CreateNoWindow = true };
+                using var process = Process.Start(startInfo)!;
+                await process.WaitForExitAsync();
             }
-
-            catch (Exception ex)
-            {
-                _logger.LogError("An error occurred while downloading the video: {Message}", ex.Message);
-                return null;
-            }
+            catch (Exception ex) { _logger.LogError(ex, "Error trimming audio"); }
         }
 
         public async Task<VideoData> GetYoutubeInfo(string url)
         {
-            var ytdl = new YoutubeDL();
-
-            ytdl.YoutubeDLPath = Path.Combine(_plugin!.ModuleDirectory, _ytdlp!);
-            var response = await ytdl.RunVideoDataFetch(url);
-            return response.Data;
+            var dl = new YoutubeDL { YoutubeDLPath = Path.Combine(_plugin!.ModuleDirectory, _ytdlp!) };
+            try { return (await dl.RunVideoDataFetch(url)).Data; }
+            catch { return new VideoData { Title = "Unknown", Uploader = "Unknown", Duration = 0 }; }
         }
 
-        public async Task TrimAudioAsync(string inputFilePath, string outputFilePath, int startSec, int duration = 0) 
-        { 
-            string startTime = TimeSpan.FromSeconds(startSec).ToString(@"hh\:mm\:ss"); 
-            string durationTime = TimeSpan.FromSeconds(duration).ToString(@"hh\:mm\:ss");
-
-            string ffmpegCommand; 
-                
-            if(duration > 0)
-                ffmpegCommand = $"-i \"{inputFilePath}\" -ss {startTime} -t {durationTime} -c copy \"{outputFilePath}\""; 
-
-            else
-                ffmpegCommand = $"-i \"{inputFilePath}\" -ss {startTime} -c copy \"{outputFilePath}\"";
-
-            var process = new System.Diagnostics.Process 
-            { 
-                StartInfo = new System.Diagnostics.ProcessStartInfo 
-                { 
-                    FileName = "ffmpeg", 
-                    Arguments = ffmpegCommand, 
-                    RedirectStandardOutput = true, 
-                    UseShellExecute = false, 
-                    CreateNoWindow = true, 
-                } 
-            }; 
-            process.Start(); 
-            await process.WaitForExitAsync(); 
+        public static string? GetYouTubeVideoId(string url)
+        {
+            if (string.IsNullOrWhiteSpace(url)) return null;
+            var regex = new Regex(@"^(?:https?:\/\/)?(?:www\.)?(?:m\.)?(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})(?:\S+)?$");
+            var match = regex.Match(url);
+            return match.Success ? match.Groups[1].Value : null;
         }
     }
 }
