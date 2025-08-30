@@ -1,272 +1,223 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;       // NullLogger
-using CounterStrikeSharp.API;                          // Utilities.GetPlayers()
-using CounterStrikeSharp.API.Modules.Timers;          // TimerFlags
-using YoutubeDLSharp;                                 // 영상 길이 조회
+using CounterStrikeSharp.API;
+using CounterStrikeSharp.API.Core;
+using CounterStrikeSharp.API.Modules.Timers;
 
 namespace Sympho.Functions
 {
     public class SubtitleCue
     {
-        public double StartTime { get; set; }   // seconds
-        public double EndTime   { get; set; }   // seconds
+        public double StartTime { get; set; }
+        public double EndTime   { get; set; }
         public string Text      { get; set; } = "";
+        public int LinePercent { get; set; } = 90; 
+        public string Position { get; set; } = ""; // align:center, align:left, align:right
+        public string Size { get; set; } = ""; // size:80%
     }
 
-    /// <summary>
-    /// 자막 랜더러: yt-dlp로 VTT를 받아 파싱하고, Stopwatch 기반으로 HUD에 출력.
-    /// - 오디오 지연(로그) 반영
-    /// - "끝에서 X초 늦는" 현상 보정:
-    ///   * 곡선형 보정(기본): shift = targetEndDrift * (t/duration)^p, elapsed = baseElapsed + shift
-    ///   * 명시적 비율(SetDriftRatio 호출) 시: 선형 비례 elapsed = baseElapsed * (1 + ratio)
-    /// </summary>
     public class Subtitles : IDisposable
     {
         private Sympho? _plugin;
-        private ILogger _logger;
+        private readonly CacheManager _cache;
+        private readonly ILogger<Sympho> _logger;
+        private string? _ytDlpPath;
 
-        // 실행 경로
-        private string? _ytDlpPath;         // 플러그인 루트의 yt-dlp 실행파일
-        private string? _ffmpegPath;        // 필요시 사용 (없어도 무관)
+        // 다양한 색상 형식 지원을 위한 사전들
+        private readonly Dictionary<string, string> _vttStyles = new();
+        private readonly Dictionary<string, string> _predefinedColors = new()
+        {
+            // HTML 색상 이름들
+            { "white", "#FFFFFF" }, { "black", "#000000" }, { "red", "#FF0000" }, { "green", "#00FF00" },
+            { "blue", "#0000FF" }, { "yellow", "#FFFF00" }, { "cyan", "#00FFFF" }, { "magenta", "#FF00FF" },
+            { "silver", "#C0C0C0" }, { "gray", "#808080" }, { "grey", "#808080" }, { "maroon", "#800000" },
+            { "olive", "#808000" }, { "lime", "#00FF00" }, { "aqua", "#00FFFF" }, { "teal", "#008080" },
+            { "navy", "#000080" }, { "fuchsia", "#FF00FF" }, { "purple", "#800080" }, { "orange", "#FFA500" },
+            { "pink", "#FFC0CB" }, { "brown", "#A52A2A" }, { "gold", "#FFD700" }, { "violet", "#EE82EE" },
+            
+            // 유튜브에서 자주 사용하는 색상들
+            { "bg_transparent", "transparent" }, { "bg_black", "#000000" }, { "bg_blue", "#0000FF" },
+            { "bg_cyan", "#00FFFF" }, { "bg_green", "#00FF00" }, { "bg_magenta", "#FF00FF" },
+            { "bg_red", "#FF0000" }, { "bg_white", "#FFFFFF" }, { "bg_yellow", "#FFFF00" }
+        };
 
-        // 시간/지연
-        private readonly Stopwatch _stopwatch = new();   // 기준 시계
-        private readonly object _delayLock = new();
-        private double _totalAudioDelay = 0.0;           // 보고된 오디오 지연(초) - 최대값 유지
-        private const double INITIAL_BUFFER_DELAY = 0.00;
-        private const double MAX_DELAY_CAP        = 0.50;
-        private DateTime _lastDelayReport = DateTime.MinValue;
+        private double _subtitleLeadTime = 0.0;
+        private const double MAX_LEAD_TIME = 2.0;
+        private const double MIN_LEAD_TIME = 0.0;
 
-        // ---- 드리프트 보정 파라미터 ----
-        private double _driftTargetAtEndSec = 3.5;  // 끝에서 당길 목표 초 (0이면 비활성)
-        private double _expectedDurationSec = 0.0;  // 자막 기준 길이(마지막 cue EndTime)
-        private double _externalDurationSec = 0.0;  // YoutubeDLSharp로 얻은 길이(초)
-        private double _durationBasisSec    = 0.0;  // 보정 기준 길이(외부 or 자막)
-        private double _driftRatio          = 0.0;  // 선형 비율 (명시적일 때만 사용)
-        private bool   _explicitDriftRatio  = false;
+        // [수정됨] 시간 드리프트 보정 계수를 하드코딩합니다.
+        // 자막이 점점 늦어지면 이 값을 1.0보다 작게 설정 (예: 0.999)
+        // 자막이 점점 빨라지면 이 값을 1.0보다 크게 설정 (예: 1.001)
+        private const double _driftCorrectionFactor = 1.007; 
 
-        // 곡선형 보정용 power (p>1이면 초반 당김 감소). 기본 auto.
-        private bool   _useAutoPower = true;
-        private double _driftPower   = 1.8;  // 수동 설정 시 사용
-
-        // 자막/표시 상태
+        private double _audioProgressSec = 0.0;
+        private bool _isAudioPlaying = false;
+        
         private List<SubtitleCue> _currentSubtitles = new();
-        private List<SubtitleCue> _lastDisplayedCues = new();
-        private string _lastDisplayedHtml = "";
-        private double _lastCueEndTime = -1.0;
-        private float  _timeSinceLastHudUpdate = 0.0f;
-
-        // 업데이트 타이머 (모호성 방지: 풀네임 타입 사용)
+        
         private CounterStrikeSharp.API.Modules.Timers.Timer? _subtitleTimer;
-        private const float TICK_4_INTERVAL      = 0.0625f; // 4틱(≈62.5ms)
-        private const float HUD_REFRESH_INTERVAL = 0.25f;   // 250ms
+        
+        private const double LINGER_DURATION = 5.0;
+        private List<SubtitleCue> _lastShownCues = new List<SubtitleCue>();
 
-        private bool _disposed;
+        private int _playListenerId = -1;
+        private int _playStartListenerId = -1;
+        private int _playEndListenerId = -1;
+        private bool _audioApiRegistered = false;
 
-        // ===== 생성자들 =====
-        public Subtitles()                      { _logger = NullLogger.Instance; }
-        public Subtitles(ILogger logger)        { _logger = logger ?? NullLogger.Instance; }
+        private Audio.PlayHandler? _playHandler;
+        private Audio.PlayStartHandler? _playStartHandler;
+        private Audio.PlayEndHandler? _playEndHandler;
 
-        /// <summary>필요하다면 동적으로 로거를 연결</summary>
-        public void AttachLogger(ILogger logger){ _logger = logger ?? NullLogger.Instance; }
+        private float _playbackStartTime = 0f;
+
+        public Subtitles(ILogger<Sympho> logger, CacheManager cache) 
+        { 
+            _logger = logger; 
+            _cache = cache; 
+        }
 
         public void Initialize(Sympho plugin)
         {
             _plugin = plugin;
-
-            // 플러그인 루트에서 yt-dlp / ffmpeg 경로 확정
             var root = plugin.ModuleDirectory;
-            var ytdlpCand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                ? new[] { "yt-dlp.exe", "yt-dlp" }
-                : new[] { "yt-dlp", "yt-dlp.exe" };
-
-            foreach (var name in ytdlpCand)
+            var candidates = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? new[] { "yt-dlp.exe", "yt-dlp" } : new[] { "yt-dlp", "yt-dlp.exe" };
+            foreach (var name in candidates)
             {
                 var full = Path.Combine(root, name);
                 if (File.Exists(full)) { _ytDlpPath = full; break; }
             }
+            if (_ytDlpPath is null) _logger.LogWarning("[Subtitles] yt-dlp executable not found in plugin directory. Subtitle downloads will be skipped.");
+            else _logger.LogInformation("[Subtitles] yt-dlp found at: {path}", _ytDlpPath);
 
-            var ffmpegCand = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-                ? new[] { "ffmpeg.exe", "ffmpeg" }
-                : new[] { "ffmpeg", "ffmpeg.exe" };
+            RegisterAudioListeners();
+        }
 
-            foreach (var name in ffmpegCand)
+        private void RegisterAudioListeners()
+        {
+            try
             {
-                var full = Path.Combine(root, name);
-                if (File.Exists(full)) { _ffmpegPath = full; break; }
+                _playHandler = OnAudioProgress;
+                _playStartHandler = OnAudioStarted;
+                _playEndHandler = OnAudioEnded;
+                _playListenerId = Audio.RegisterPlayListener(_playHandler);
+                _playStartListenerId = Audio.RegisterPlayStartListener(_playStartHandler);
+                _playEndListenerId = Audio.RegisterPlayEndListener(_playEndHandler);
+                _audioApiRegistered = true;
+                _logger.LogInformation("[Subtitles] Audio API listeners registered successfully. IDs: Play={0}, Start={1}, End={2}", 
+                    _playListenerId, _playStartListenerId, _playEndListenerId);
             }
-
-            if (_ytDlpPath is null)
-                _logger.LogWarning("[Subtitles] yt-dlp not found in plugin root; subtitles download will be skipped.");
-            else
-                _logger.LogInformation("[Subtitles] yt-dlp: {exe}", _ytDlpPath);
-        }
-
-        // ===== 외부 설정 API =====
-
-        /// <summary>끝에서 당길 초(곡선형 보정 기준). 0이면 보정하지 않음.</summary>
-        public void SetGlobalEndDrift(double seconds)
-        {
-            _driftTargetAtEndSec = Math.Max(0.0, seconds);
-            if (!_explicitDriftRatio) _driftRatio = 0.0; // 다음 시작 시 재계산
-            _logger.LogInformation("[Subtitles] Set end-drift target: {sec:F3}s", _driftTargetAtEndSec);
-        }
-
-        /// <summary>선형 보정 비율을 직접 지정 (예: 0.012 = 1.2%). 지정 시 곡선형 대신 선형 사용.</summary>
-        public void SetDriftRatio(double ratio)
-        {
-            _driftRatio = Math.Max(0.0, ratio);
-            _explicitDriftRatio = true;
-            _logger.LogInformation("[Subtitles] Set drift ratio (linear): {pct:P3}", _driftRatio);
-        }
-
-        /// <summary>곡선형 보정 power를 수동 지정 (p &gt;= 1). null 이면 자동.</summary>
-        public void SetDriftPower(double? power)
-        {
-            if (power.HasValue)
+            catch (Exception ex)
             {
-                _driftPower   = Math.Max(1.0, power.Value);
-                _useAutoPower = false;
-                _logger.LogInformation("[Subtitles] Set drift power (manual): {p:F2}", _driftPower);
-            }
-            else
-            {
-                _useAutoPower = true;
-                _logger.LogInformation("[Subtitles] Drift power set to AUTO");
+                _logger.LogError(ex, "[Subtitles] Failed to register audio API listeners. Subtitle sync may not work properly.");
+                _audioApiRegistered = false;
             }
         }
 
-        // ===== 오디오 이벤트/지연 보고 =====
+        private void OnAudioProgress(int slot, int progressMs) { }
 
-        public void OnAudioStarted()
+        private void OnAudioStarted(int slot)
         {
-            lock (_delayLock) _totalAudioDelay = 0.0;
-            _stopwatch.Restart();
-            _timeSinceLastHudUpdate = 0.0f;
-            _logger.LogDebug("[Subtitles] Audio started: reset delay & stopwatch");
+            Server.NextFrame(() =>
+            {
+                if (slot == -1)
+                {
+                    _audioProgressSec = 0.0;
+                    _isAudioPlaying = true;
+                    _playbackStartTime = Server.CurrentTime;
+                    _logger.LogInformation("[Subtitles] Audio started, resetting progress and starting internal timer.");
+                }
+            });
+        }
+
+        private void OnAudioEnded(int slot)
+        {
+            Server.NextFrame(() =>
+            {
+                if (slot == -1)
+                {
+                    _isAudioPlaying = false;
+                    _logger.LogInformation("[Subtitles] Audio ended.");
+                    
+                    foreach (var p in Utilities.GetPlayers())
+                        if (p != null && p.IsValid)
+                            try { p.PrintToCenterHtml(""); } catch { }
+                }
+            });
+        }
+        
+        public void OnAudioStarted() 
+        { 
+            _audioProgressSec = 0.0;
+            _isAudioPlaying = true;
         }
 
         public void ReportAudioDelay(double delayMilliseconds)
         {
-            var newDelay = Math.Max(0.0, delayMilliseconds / 1000.0);
-            lock (_delayLock)
+            var delaySeconds = delayMilliseconds / 1000.0;
+            if (delaySeconds > 0.05)
             {
-                _totalAudioDelay = Math.Max(_totalAudioDelay, newDelay);
-                if (_totalAudioDelay > MAX_DELAY_CAP) _totalAudioDelay = MAX_DELAY_CAP;
+                var newLeadTime = Math.Min(MAX_LEAD_TIME, Math.Max(MIN_LEAD_TIME, _subtitleLeadTime + delaySeconds * 0.8));
+                if (Math.Abs(newLeadTime - _subtitleLeadTime) > 0.01)
+                {
+                    _subtitleLeadTime = newLeadTime;
+                    _logger.LogInformation("[Subtitles] Audio delay detected. Adjusted subtitle lead time to {lead:F3}s.", _subtitleLeadTime);
+                }
             }
-            _lastDelayReport = DateTime.UtcNow;
         }
 
-        // ===== 자막 로드/파싱 =====
-
-        public async Task<List<SubtitleCue>> FetchAndParseSubtitlesAsync(string url)
+        public async Task<List<SubtitleCue>> FetchAndParseSubtitlesAsync(string url, string? langCode)
         {
+            if (string.IsNullOrWhiteSpace(langCode)) return new List<SubtitleCue>();
+            
             var cues = new List<SubtitleCue>();
             try
             {
-                if (_plugin == null) return cues;
-
-                var videoId = GetYouTubeVideoId(url);
+                if (_plugin == null || _ytDlpPath == null || !File.Exists(_ytDlpPath)) return cues;
+                var videoId = Youtube.GetYouTubeVideoId(url);
                 if (string.IsNullOrEmpty(videoId)) return cues;
-
-                var root = _plugin.ModuleDirectory;
-                var tmp  = Path.Combine(root, "tmp");
-                Directory.CreateDirectory(tmp);
-
-                if (_ytDlpPath is null || !File.Exists(_ytDlpPath))
-                {
-                    _logger.LogWarning("[Subtitles] yt-dlp missing; skipping subtitle download.");
-                    return cues;
-                }
-
-                var outTemplate = Path.Combine(tmp, "%(id)s.%(ext)s");
+                var tmpDir = Path.GetDirectoryName(_cache.GetPathForUrl(url))!;
+                var outTemplate = Path.Combine(tmpDir, "%(id)s.%(ext)s");
+                
                 var psi = new ProcessStartInfo
                 {
                     FileName = _ytDlpPath,
-                    WorkingDirectory = root,
-                    Arguments =
-                        "--no-warnings --ignore-config --no-check-certificates --skip-download " +
-                        "--write-subs --no-write-auto-subs --sub-langs \"ko,en,ja\" --convert-subs vtt " +
-                        $"--output \"{outTemplate}\" \"{url}\"",
-                    UseShellExecute = false,
-                    RedirectStandardError = true,
-                    RedirectStandardOutput = true,
-                    CreateNoWindow = true
+                    WorkingDirectory = _plugin.ModuleDirectory,
+                    Arguments = $"--no-warnings --ignore-config --no-check-certificates --skip-download --write-subs --sub-langs \"{langCode}\" --convert-subs vtt --output \"{outTemplate}\" \"{url}\"",
+                    UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true, CreateNoWindow = true
                 };
-
-                _logger.LogInformation("[Subtitles] running yt-dlp: {exe} (wd={wd})", psi.FileName, psi.WorkingDirectory);
 
                 using var p = Process.Start(psi);
-                if (p == null)
+                if (p == null) return cues;
+                await p.WaitForExitAsync(new CancellationTokenSource(TimeSpan.FromMinutes(2)).Token);
+                
+                var vttFile = Directory.EnumerateFiles(tmpDir, $"{videoId}*.vtt")
+                                       .Select(fp => new FileInfo(fp))
+                                       .FirstOrDefault(f => f.Name.Contains(langCode));
+
+                if (vttFile == null) 
                 {
-                    _logger.LogWarning("[Subtitles] failed to start yt-dlp process.");
+                    _logger.LogWarning("[Subtitles] Could not find a downloaded VTT file for language '{langCode}'.", langCode);
                     return cues;
                 }
-
-                var errTask = p.StandardError.ReadToEndAsync();
-                await p.WaitForExitAsync();
-                var stderr = await errTask;
-                if (!string.IsNullOrWhiteSpace(stderr))
-                    _logger.LogDebug("[yt-dlp] {msg}", stderr.Trim());
-
-                // 최신 vtt 선택 (id로 시작하는 파일)
-                var vtt = Directory.EnumerateFiles(tmp, "*.vtt")
-                    .Select(fp => new FileInfo(fp))
-                    .OrderByDescending(fi => fi.LastWriteTimeUtc)
-                    .FirstOrDefault(fi =>
-                        Path.GetFileName(fi.FullName).StartsWith(videoId, StringComparison.OrdinalIgnoreCase));
-
-                if (vtt == null)
-                {
-                    _logger.LogInformation("[Subtitles] No non-auto VTT subtitles found.");
-                    return cues;
-                }
-
-                cues = await ParseVttFile(vtt.FullName);
-
-                // --- 여기서 YoutubeDLSharp로 영상 길이 조회 → 드리프트 기준 준비 ---
-                await TryUpdateExternalDurationAsync(url);
+                cues = await ParseVttFile(vttFile.FullName);
+                _logger.LogInformation("[Subtitles] Successfully parsed {count} subtitle cues from VTT file.", cues.Count);
             }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to fetch/parse subtitles");
+            catch (Exception ex) 
+            { 
+                _logger.LogError(ex, "An error occurred while fetching subtitles for language '{langCode}'", langCode); 
             }
             return cues;
-        }
-
-        private async Task TryUpdateExternalDurationAsync(string url)
-        {
-            try
-            {
-                if (_ytDlpPath is null) return;
-
-                var ytdl = new YoutubeDL
-                {
-                    YoutubeDLPath = _ytDlpPath,
-                    FFmpegPath    = _ffmpegPath
-                };
-
-                var res = await ytdl.RunVideoDataFetch(url);
-                if (res.Success && res.Data.Duration.HasValue)
-                {
-                    _externalDurationSec = Math.Max(0.0, res.Data.Duration.Value);
-                    _logger.LogInformation("[Subtitles] Video duration via DLSharp: {sec:F2}s", _externalDurationSec);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogDebug(ex, "[Subtitles] Failed to query duration via DLSharp");
-            }
         }
 
         private async Task<List<SubtitleCue>> ParseVttFile(string vttPath)
@@ -274,247 +225,329 @@ namespace Sympho.Functions
             var cues = new List<SubtitleCue>();
             try
             {
-                string content;
-                using (var sr = new StreamReader(vttPath, Encoding.UTF8, true))
-                    content = await sr.ReadToEndAsync();
-
+                var content = await File.ReadAllTextAsync(vttPath, Encoding.UTF8);
                 if (string.IsNullOrWhiteSpace(content)) return cues;
-
-                var blocks = content.Split(new[] { "\r\n\r\n", "\n\n" }, StringSplitOptions.RemoveEmptyEntries);
+                ParseVttStyleBlock(content);
+                content = Regex.Replace(content, @"NOTE\s+.*?(?=\r?\n\r?\n)", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+                var blocks = Regex.Split(content, @"(?:\r?\n){2,}");
+                
                 foreach (var block in blocks)
                 {
                     var trimmed = block.Trim();
-                    if (trimmed.StartsWith("WEBVTT", StringComparison.OrdinalIgnoreCase)) continue;
-
-                    var lines = trimmed.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
-                    var timeLine = lines.FirstOrDefault(l => l.Contains("-->"));
-                    if (timeLine is null) continue;
-
-                    var m = Regex.Match(timeLine, @"^([\d:.]+)\s*-->\s*([\d:.]+)");
-                    if (!m.Success) continue;
-
-                    var start = ParseTimeToSeconds(m.Groups[1].Value);
-                    var end   = ParseTimeToSeconds(m.Groups[2].Value);
-                    if (end <= start) continue;
-
-                    // 멀티라인 → <br /> 유지
-                    var text = string.Join("<br />", lines.SkipWhile(l => !l.Contains("-->")).Skip(1)).Trim();
-                    text = Regex.Replace(text, "<.*?>", string.Empty).Trim();
-                    if (!string.IsNullOrWhiteSpace(text))
-                        cues.Add(new SubtitleCue { StartTime = start, EndTime = end, Text = text });
+                    if (string.IsNullOrEmpty(trimmed)) continue;
+                    
+                    if (trimmed.StartsWith("WEBVTT") || trimmed.StartsWith("Kind:") || trimmed.StartsWith("Language:") || trimmed.StartsWith("STYLE") || trimmed.StartsWith("NOTE")) continue;
+                    var parsedCue = ParseSingleCue(trimmed);
+                    if (parsedCue != null) cues.Add(parsedCue);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to parse VTT: {path}", vttPath);
+                _logger.LogError(ex, "Failed to parse VTT file: {path}", vttPath);
             }
             return cues.OrderBy(c => c.StartTime).ToList();
         }
 
-        private static double ParseTimeToSeconds(string t)
+        private SubtitleCue? ParseSingleCue(string cueBlock)
         {
-            var parts = t.Trim().Split('.');
-            var main = parts[0];
-            var ms = (parts.Length > 1 && int.TryParse(parts[1], out var _ms)) ? _ms : 0;
-
-            var hms = main.Split(':');
-            int h = 0, m = 0, s = 0;
-            if (hms.Length == 3) { h = int.Parse(hms[0]); m = int.Parse(hms[1]); s = int.Parse(hms[2]); }
-            else if (hms.Length == 2) { m = int.Parse(hms[0]); s = int.Parse(hms[1]); }
-
-            return h * 3600 + m * 60 + s + ms / 1000.0;
+            try
+            {
+                var lines = cueBlock.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+                string? timeLine = null;
+                int timeLineIndex = -1;
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    var line = lines[i].Trim();
+                    if (Regex.IsMatch(line, @"[\d:.]+\s*-->\s*[\d:.]+"))
+                    {
+                        timeLine = line;
+                        timeLineIndex = i;
+                        break;
+                    }
+                }
+                if (timeLine == null) return null;
+                var timeMatch = Regex.Match(timeLine, @"^([\d:.,]+)\s*-->\s*([\d:.,]+)(.*)");
+                if (!timeMatch.Success) return null;
+                var start = ParseTimeToSeconds(timeMatch.Groups[1].Value);
+                var end = ParseTimeToSeconds(timeMatch.Groups[2].Value);
+                if (end <= start) return null;
+                var attributes = timeMatch.Groups[3].Value.Trim();
+                int linePercent = 90;
+                var lineMatch = Regex.Match(attributes, @"line:(-?\d+(?:\.\d+)?%?)");
+                if (lineMatch.Success && lineMatch.Groups[1].Value.EndsWith("%") && int.TryParse(lineMatch.Groups[1].Value.TrimEnd('%'), out int parsedPercent))
+                {
+                    linePercent = Math.Max(0, Math.Min(100, parsedPercent));
+                }
+                string position = "";
+                var alignMatch = Regex.Match(attributes, @"align:(start|center|end|left|middle|right)");
+                if (alignMatch.Success) position = alignMatch.Groups[1].Value;
+                string size = "";
+                var sizeMatch = Regex.Match(attributes, @"size:(\d+(?:\.\d+)?%?)");
+                if (sizeMatch.Success) size = sizeMatch.Groups[1].Value;
+                var textLines = lines.Skip(timeLineIndex + 1).Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
+                if (!textLines.Any()) return null;
+                var rawText = string.Join(" ", textLines).Trim();
+                if (string.IsNullOrWhiteSpace(rawText)) return null;
+                var htmlText = VttParser_Enhanced(rawText);
+                if (!string.IsNullOrWhiteSpace(htmlText))
+                {
+                    return new SubtitleCue { StartTime = start, EndTime = end, Text = htmlText, LinePercent = linePercent, Position = position, Size = size };
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to parse individual cue block");
+            }
+            return null;
         }
 
-        // ===== 실시간 렌더링 =====
+        private void ParseVttStyleBlock(string fileContent)
+        {
+            _vttStyles.Clear();
+            var styleMatches = Regex.Matches(fileContent, @"STYLE\s*([\s\S]*?)(?=\r?\n\r?\n|$)", RegexOptions.IgnoreCase);
+            foreach (Match styleMatch in styleMatches) ParseCssStyles(styleMatch.Groups[1].Value);
+            var noteMatches = Regex.Matches(fileContent, @"NOTE.*?Style:\s*([\s\S]*?)(?=\r?\n\r?\n|$)", RegexOptions.IgnoreCase);
+            foreach (Match noteMatch in noteMatches) ParseCssStyles(noteMatch.Groups[1].Value);
+        }
+
+        private void ParseCssStyles(string styleBlock)
+        {
+            try
+            {
+                var cssRules = Regex.Matches(styleBlock, @"([^{]+)\s*\{\s*([^}]+)\s*\}", RegexOptions.IgnoreCase);
+                foreach (Match rule in cssRules)
+                {
+                    var selector = rule.Groups[1].Value.Trim();
+                    var properties = rule.Groups[2].Value.Trim();
+                    var colorMatch = Regex.Match(properties, @"color:\s*([^;]+)", RegexOptions.IgnoreCase);
+                    if (colorMatch.Success)
+                    {
+                        var hexColor = ParseColorValue(colorMatch.Groups[1].Value.Trim());
+                        if (!string.IsNullOrEmpty(hexColor))
+                        {
+                            var classMatches = Regex.Matches(selector, @"\.([a-zA-Z0-9_-]+)", RegexOptions.IgnoreCase);
+                            foreach (Match classMatch in classMatches)
+                            {
+                                var className = classMatch.Groups[1].Value.ToLowerInvariant();
+                                _vttStyles[className] = hexColor;
+                                _vttStyles["c." + className] = hexColor;
+                            }
+                            var cueMatch = Regex.Match(selector, @"::cue\s*\(\s*\.?([a-zA-Z0-9_-]+)\s*\)", RegexOptions.IgnoreCase);
+                            if (cueMatch.Success)
+                            {
+                                var className = cueMatch.Groups[1].Value.ToLowerInvariant();
+                                _vttStyles[className] = hexColor;
+                                _vttStyles["c." + className] = hexColor;
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex) { _logger.LogWarning(ex, "Error parsing CSS styles from VTT"); }
+        }
+
+        private string ParseColorValue(string colorValue)
+        {
+            colorValue = colorValue.Trim().ToLowerInvariant();
+            if (colorValue.StartsWith("#")) return colorValue;
+            var rgbMatch = Regex.Match(colorValue, @"rgba?\s*\((\d+),(\d+),(\d+)");
+            if (rgbMatch.Success)
+            {
+                int r = int.Parse(rgbMatch.Groups[1].Value);
+                int g = int.Parse(rgbMatch.Groups[2].Value);
+                int b = int.Parse(rgbMatch.Groups[3].Value);
+                return $"#{r:X2}{g:X2}{b:X2}";
+            }
+            if (_predefinedColors.TryGetValue(colorValue, out var namedColor)) return namedColor;
+            return "";
+        }
+
+        private string VttParser_Enhanced(string vttText)
+        {
+            if (string.IsNullOrWhiteSpace(vttText)) return string.Empty;
+            string cleanedText = vttText;
+            cleanedText = Regex.Replace(cleanedText, @"\s+", " ").Replace("&nbsp;", " ").Replace("&#160;", " ").Replace("\u00A0", " ");
+            cleanedText = cleanedText.Replace("&amp;", "&").Replace("&lt;", "<").Replace("&gt;", ">").Replace("&quot;", "\"").Replace("&#39;", "'");
+            var result = new StringBuilder();
+            var tagStack = new Stack<string>();
+            int i = 0;
+            while (i < cleanedText.Length)
+            {
+                if (cleanedText[i] == '<')
+                {
+                    int tagEnd = cleanedText.IndexOf('>', i);
+                    if (tagEnd == -1) { result.Append(cleanedText[i++]); continue; }
+                    string tagContent = cleanedText.Substring(i + 1, tagEnd - i - 1).Trim();
+                    i = tagEnd + 1;
+                    if (Regex.IsMatch(tagContent, @"^[\d:.]+$")) continue;
+                    if (tagContent.StartsWith("/")) { if (tagStack.Count > 0) result.Append(tagStack.Pop()); }
+                    else ProcessOpenTag(tagContent, result, tagStack);
+                }
+                else result.Append(cleanedText[i++]);
+            }
+            while (tagStack.Count > 0) result.Append(tagStack.Pop());
+            return result.ToString().Trim();
+        }
+
+        private void ProcessOpenTag(string tagContent, StringBuilder result, Stack<string> tagStack)
+        {
+            var parts = tagContent.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length == 0) return;
+            var tagName = parts[0].ToLowerInvariant();
+            string htmlOpenTag = "", htmlCloseTag = "";
+            switch (tagName)
+            {
+                case "b": htmlOpenTag = "<b>"; htmlCloseTag = "</b>"; break;
+                case "i": htmlOpenTag = "<i>"; htmlCloseTag = "</i>"; break;
+                case "u": htmlOpenTag = "<u>"; htmlCloseTag = "</u>"; break;
+                case "s": htmlOpenTag = "<s>"; htmlCloseTag = "</s>"; break;
+                case "v":
+                    var voiceMatch = Regex.Match(tagContent, @"v\s+([^>]+)");
+                    if (voiceMatch.Success) result.Append($"<i>[{voiceMatch.Groups[1].Value.Trim()}]:</i> ");
+                    break;
+                case "rt": return;
+                default:
+                    string colorHex = "";
+                    if (_vttStyles.TryGetValue(tagName, out var styleColor) || (tagName.StartsWith("c.") && _vttStyles.TryGetValue(tagName, out styleColor)) || _predefinedColors.TryGetValue(tagName, out styleColor))
+                    {
+                        colorHex = styleColor;
+                    }
+                    if (!string.IsNullOrEmpty(colorHex))
+                    {
+                        htmlOpenTag = $"<font color='{colorHex}'>";
+                        htmlCloseTag = "</font>";
+                    }
+                    break;
+            }
+            if (!string.IsNullOrEmpty(htmlOpenTag))
+            {
+                result.Append(htmlOpenTag);
+                tagStack.Push(htmlCloseTag);
+            }
+        }
+
+        private static double ParseTimeToSeconds(string timeStr)
+        {
+            try
+            {
+                timeStr = timeStr.Trim().Replace(',', '.');
+                var parts = timeStr.Split('.');
+                var mainPart = parts[0];
+                double.TryParse(parts.Length > 1 ? parts[1].PadRight(3, '0').Substring(0, 3) : "0", out var ms);
+                var timeParts = mainPart.Split(':');
+                double totalSeconds = 0;
+                if (timeParts.Length == 3 && int.TryParse(timeParts[0], out int h) && int.TryParse(timeParts[1], out int m) && int.TryParse(timeParts[2], out int s))
+                    totalSeconds = h * 3600 + m * 60 + s;
+                else if (timeParts.Length == 2 && int.TryParse(timeParts[0], out m) && int.TryParse(timeParts[1], out s))
+                    totalSeconds = m * 60 + s;
+                else if (timeParts.Length == 1 && double.TryParse(timeParts[0], out var sec))
+                    totalSeconds = sec;
+                return totalSeconds + (ms / 1000.0);
+            }
+            catch { return 0.0; }
+        }
 
         public void StartRealtimeSubtitles(List<SubtitleCue> cues)
         {
-            if (cues == null || cues.Count == 0) return;
-
+            if (_plugin == null || cues == null || cues.Count == 0) return;
             StopRealtimeSubtitles();
-
             _currentSubtitles = cues;
-            _lastDisplayedCues.Clear();
-            _lastDisplayedHtml = "";
-            _lastCueEndTime = -1.0;
-            _timeSinceLastHudUpdate = 0.0f;
-
-            // 자막 기준 총 길이(마지막 cue EndTime)
-            _expectedDurationSec = Math.Max(0.0, cues.Max(c => c.EndTime));
-            _durationBasisSec    = (_externalDurationSec > 5.0) ? _externalDurationSec : _expectedDurationSec;
-
-            OnAudioStarted(); // stopwatch 리셋
-
-            _subtitleTimer = _plugin!.AddTimer(
-                TICK_4_INTERVAL,
-                () => UpdateSubtitles(TICK_4_INTERVAL),
-                TimerFlags.REPEAT
-            );
-
-            if (_explicitDriftRatio)
-            {
-                _logger.LogInformation("[Subtitles] started with {Count} cues, linear ratio: {pct:P3}",
-                    _currentSubtitles.Count, _driftRatio);
-            }
-            else if (_driftTargetAtEndSec > 0.0 && _durationBasisSec > 5.0)
-            {
-                var p = _useAutoPower ? ComputeAutoPower(_durationBasisSec) : _driftPower;
-                _logger.LogInformation("[Subtitles] started with {Count} cues, curve drift: target {end:F2}s, basis {dur:F2}s, power {p:F2}",
-                    _currentSubtitles.Count, _driftTargetAtEndSec, _durationBasisSec, p);
-            }
-            else
-            {
-                _logger.LogInformation("[Subtitles] started with {Count} cues (no drift correction)", _currentSubtitles.Count);
-            }
+            _audioProgressSec = 0.0;
+            _isAudioPlaying = true;
+            _subtitleTimer = _plugin.AddTimer(0.05f, UpdateSubtitles, TimerFlags.REPEAT);
+            _logger.LogInformation("[Subtitles] Started with {Count} cues. Correction Factor: {factor}", _currentSubtitles.Count, _driftCorrectionFactor);
         }
 
         public void StopRealtimeSubtitles()
         {
             _subtitleTimer?.Kill();
             _subtitleTimer = null;
-
             _currentSubtitles.Clear();
-            _lastDisplayedCues.Clear();
-            _lastDisplayedHtml = "";
-            _lastCueEndTime = -1.0;
-            _timeSinceLastHudUpdate = 0.0f;
-
-            lock (_delayLock) _totalAudioDelay = 0.0;
-
-            // 다음 틱에 HUD 지우기
-            _plugin?.AddTimer(0.0f, () =>
+            _vttStyles.Clear();
+            _lastShownCues.Clear();
+            _audioProgressSec = 0.0;
+            _isAudioPlaying = false;
+            
+            Server.NextFrame(() =>
             {
+                foreach (var p in Utilities.GetPlayers()) 
+                    if(p != null && p.IsValid) 
+                        try { p.PrintToCenterHtml(""); } catch { } 
+            });
+        }
+
+        private void UpdateSubtitles()
+        {
+            Server.NextFrame(() =>
+            {
+                if (_plugin == null || _currentSubtitles.Count == 0 || !_isAudioPlaying) return;
+
+                // [수정됨] 경과 시간 계산 시 하드코딩된 보정 계수를 곱합니다.
+                var elapsedTime = Server.CurrentTime - _playbackStartTime;
+                _audioProgressSec = elapsedTime * _driftCorrectionFactor;
+
+                var futureTime = _audioProgressSec;
+                var activeCues = _currentSubtitles.Where(c => c.StartTime <= futureTime && futureTime < c.EndTime).ToList();
+
+                List<SubtitleCue> finalCuesToShow;
+                if (activeCues.Any())
+                {
+                    finalCuesToShow = activeCues
+                        .GroupBy(c => c.LinePercent)
+                        .Select(group => group.OrderByDescending(c => c.StartTime).First())
+                        .OrderBy(c => c.LinePercent)
+                        .ToList();
+                    _lastShownCues = finalCuesToShow;
+                }
+                else
+                {
+                    if (_lastShownCues.Any() && futureTime <= _lastShownCues.Max(c => c.EndTime) + LINGER_DURATION)
+                    {
+                        finalCuesToShow = _lastShownCues;
+                    }
+                    else
+                    {
+                        finalCuesToShow = new List<SubtitleCue>();
+                        _lastShownCues.Clear();
+                    }
+                }
+                
+                string innerHtml = finalCuesToShow.Any() ? string.Join("<br>", finalCuesToShow.Select(c => c.Text)) : "";
+                string newHtml = string.IsNullOrWhiteSpace(innerHtml) ? "" : $"<font size='5'>{innerHtml}</font>";
+
                 foreach (var p in Utilities.GetPlayers())
                 {
-                    try { p.PrintToCenterHtml(""); } catch { }
+                    if (p != null && p.IsValid)
+                    {
+                        try 
+                        { 
+                            p.PrintToCenterHtml(newHtml); 
+                        } 
+                        catch (Exception ex) 
+                        { 
+                            _logger.LogWarning(ex, "Error printing subtitle to player HUD."); 
+                        }
+                    }
                 }
             });
-
-            // 다음 곡에서 자동 계산을 다시 허용 (명시 세팅은 유지)
-            _externalDurationSec = 0.0;
-            _expectedDurationSec = 0.0;
-            _durationBasisSec    = 0.0;
         }
 
-        private void UpdateSubtitles(float frameTime)
-        {
-            const double LINGER = 7.0; // 마지막 자막 잔상 유지
-
-            _timeSinceLastHudUpdate += frameTime;
-
-            // Stopwatch 기반 진행 시간 + 지연 보정
-            var rawElapsed = _stopwatch.Elapsed.TotalSeconds;
-
-            double delay;
-            lock (_delayLock) delay = _totalAudioDelay;
-
-            var baseElapsed = Math.Max(0.0, rawElapsed - (INITIAL_BUFFER_DELAY + delay));
-
-            double elapsed;
-
-            if (_explicitDriftRatio && _driftRatio > 0.0)
-            {
-                // 명시적 선형 보정(과거 방식 유지)
-                elapsed = baseElapsed * (1.0 + _driftRatio);
-            }
-            else if (_driftTargetAtEndSec > 0.0 && _durationBasisSec > 5.0)
-            {
-                // 곡선형 보정: shift = target * (t/d)^p
-                var x = Math.Clamp(baseElapsed / _durationBasisSec, 0.0, 1.0);
-                var p = _useAutoPower ? ComputeAutoPower(_durationBasisSec) : _driftPower;
-                var shift = _driftTargetAtEndSec * Math.Pow(x, p);
-                elapsed = baseElapsed + shift;
-            }
-            else
-            {
-                elapsed = baseElapsed;
-            }
-
-            // 표시할 자막 선택
-            var active = _currentSubtitles.Where(c => c.StartTime <= elapsed && elapsed <= c.EndTime).ToList();
-
-            string newHtml;
-            if (active.Count > 0)
-            {
-                newHtml = BuildSubtitleHtml(active);
-                _lastDisplayedCues = active;
-                _lastCueEndTime = active.Max(c => c.EndTime);
-            }
-            else if (_lastDisplayedCues.Count > 0 && elapsed <= _lastCueEndTime + LINGER)
-            {
-                newHtml = BuildSubtitleHtml(_lastDisplayedCues);
-            }
-            else
-            {
-                newHtml = "<font color='white' size='5'>&nbsp;</font>";
-                if (_lastDisplayedCues.Count > 0) _lastDisplayedCues.Clear();
-            }
-
-            // HUD 업데이트(변경되었거나 250ms 주기로)
-            if (newHtml != _lastDisplayedHtml || _timeSinceLastHudUpdate >= HUD_REFRESH_INTERVAL)
-            {
-                _lastDisplayedHtml = newHtml;
-                _timeSinceLastHudUpdate = 0.0f;
-
-                _plugin!.AddTimer(0.0f, () =>
-                {
-                    foreach (var p in Utilities.GetPlayers())
-                    {
-                        try { p.PrintToCenterHtml(newHtml); } catch { }
-                    }
-                });
-            }
-
-            // 지연 로그가 한동안 없으면 지연값 천천히 감쇠(선택)
-            if (_totalAudioDelay > 0.0 && (DateTime.UtcNow - _lastDelayReport).TotalSeconds > 2.0)
-            {
-                lock (_delayLock)
-                {
-                    _totalAudioDelay = Math.Max(0.0, _totalAudioDelay - 0.01); // 초당 0.01s 감소
-                }
-            }
-        }
-
-        private static double BuildPowerManualOrAuto(double manual, bool useAuto, double basisSec)
-        {
-            return useAuto ? ComputeAutoPower(basisSec) : Math.Max(1.0, manual);
-        }
-
-        /// <summary>
-        /// 자동 power: 곡이 짧을수록 p를 크게(초반 당김 억제 강화).
-        /// 예) 90s → ≈2.53, 135s → ≈2.09, 240s → ≈1.70, 300s → ≈1.60
-        /// </summary>
-        private static double ComputeAutoPower(double basisSec)
-        {
-            // p = clamp(1.2 + 120 / basis, 1.2, 2.6)
-            var p = 1.2 + 120.0 / Math.Max(30.0, basisSec);
-            if (p < 1.2) p = 1.2;
-            if (p > 2.6) p = 2.6;
-            return p;
-        }
-
-        private static string BuildSubtitleHtml(IEnumerable<SubtitleCue> cues)
-        {
-            var text = string.Join("<br />", cues.Select(c => WebUtility.HtmlEncode(c.Text)));
-            return $"<font color='white' size='5'>{text}</font>";
-        }
-
-        // ===== 유틸 =====
-
-        private static string GetYouTubeVideoId(string url)
-        {
-            if (string.IsNullOrWhiteSpace(url)) return string.Empty;
-            var rx = new Regex(@"(?:youtu\.be\/|v=)([A-Za-z0-9_\-]{6,})", RegexOptions.IgnoreCase);
-            var m = rx.Match(url);
-            return m.Success ? m.Groups[1].Value : string.Empty;
-        }
-
-        // ===== IDisposable =====
         public void Dispose()
         {
-            if (_disposed) return;
-            _disposed = true;
-            try { StopRealtimeSubtitles(); } catch { /* ignore */ }
+            StopRealtimeSubtitles();
+            try
+            {
+                if (_audioApiRegistered)
+                {
+                    if (_playListenerId >= 0 && _playHandler != null) Audio.UnregisterPlayListener(_playHandler);
+                    if (_playStartListenerId >= 0 && _playStartHandler != null) Audio.UnregisterPlayStartListener(_playStartHandler);
+                    if (_playEndListenerId >= 0 && _playEndHandler != null) Audio.UnregisterPlayEndListener(_playEndHandler);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Subtitles] Error unregistering audio listeners.");
+            }
         }
     }
 }

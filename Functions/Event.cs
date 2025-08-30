@@ -38,8 +38,7 @@ namespace Sympho
                     if (parts.Length >= 3 && int.TryParse(parts[2], out var parsed))
                         startSeconds = parsed;
                     
-                    Action<string> replyToChat = msg => player.PrintToChat(msg);
-                    _plugin.EnqueueYoutubeFromChat(player, url, startSeconds, replyToChat);
+                    _ = _plugin.ShowSubtitleSelectionMenu(player, url, startSeconds);
                 }
                 
                 return HookResult.Stop;
