@@ -41,7 +41,7 @@ sharp/
 On first load, Sympho creates:
 
 ```text
-sharp/modules/Sympho/config/settings.json
+sharp/configs/Sympho/settings.json
 sharp/modules/Sympho/sympho_tmp/
 ```
 
@@ -59,7 +59,7 @@ Admin commands require the `admin:kick` permission.
 
 ## Settings
 
-`settings.json` is created in `sharp/modules/Sympho/config/`.
+`settings.json` is created in `sharp/configs/Sympho/`.
 
 | Setting | Default | Description |
 | --- | ---: | --- |

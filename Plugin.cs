@@ -45,6 +45,7 @@ public sealed class Sympho : IModSharpModule
     private readonly Subtitles _subs;
     private readonly CacheManager _cache;
     private readonly string _moduleDirectory;
+    private readonly string _sharpPath;
     private readonly ConcurrentQueue<(string url, int start, IGameClient? player, bool isAdmin, string? langCode)> _queue = new();
     private readonly ConcurrentDictionary<int, (ulong SteamId, ushort UserId, float HiddenUntil)> _subtitleHudHiddenUntil = new();
     private CancellationTokenSource _cts = new();
@@ -80,6 +81,7 @@ public sealed class Sympho : IModSharpModule
         _moduleDirectory = Directory.Exists(dllPath)
             ? dllPath
             : Path.GetDirectoryName(dllPath) ?? AppContext.BaseDirectory;
+        _sharpPath = Path.GetFullPath(sharpPath);
 
         _handler = new AudioHandler(_logger);
         _cache = new CacheManager(_logger);
@@ -827,10 +829,17 @@ public sealed class Sympho : IModSharpModule
     {
         try
         {
-            var configDir = Path.Combine(_moduleDirectory, "config");
+            var configDir = Path.Combine(_sharpPath, "configs", "Sympho");
             Directory.CreateDirectory(configDir);
 
             var path = Path.Combine(configDir, "settings.json");
+            var legacyPath = Path.Combine(_moduleDirectory, "config", "settings.json");
+            if (!File.Exists(path) && File.Exists(legacyPath))
+            {
+                File.Move(legacyPath, path);
+                TryDeleteEmptyDirectory(Path.GetDirectoryName(legacyPath));
+            }
+
             if (!File.Exists(path))
             {
                 File.WriteAllText(path, JsonSerializer.Serialize(new Settings(), SettingsJsonOptions));
@@ -842,6 +851,22 @@ public sealed class Sympho : IModSharpModule
         {
             _logger.LogError(ex, "Failed to load settings.json");
             Config = new Settings();
+        }
+    }
+
+    private static void TryDeleteEmptyDirectory(string? path)
+    {
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(path) &&
+                Directory.Exists(path) &&
+                Directory.GetFileSystemEntries(path).Length == 0)
+            {
+                Directory.Delete(path);
+            }
+        }
+        catch
+        {
         }
     }
 
