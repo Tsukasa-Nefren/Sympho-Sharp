@@ -1,32 +1,15 @@
-﻿using CounterStrikeSharp.API;
-using CounterStrikeSharp.API.Core;
-using CounterStrikeSharp.API.Modules.Timers;
+namespace Sympho.Functions;
 
-namespace Sympho.Functions
+public static class AntiSpamData
 {
-    public class AntiSpamData
-    {
-        public static int PlayedCount = 0;
-        public static float AvailableAgain = 0f;
+    private static int _playedCount;
+    private static float _availableAgain;
 
-        public static int GetPlayedCount()
-        { 
-            return PlayedCount; 
-        }
+    public static int GetPlayedCount() => _playedCount;
 
-        public static void SetPlayedCount(int value)
-        {
-            PlayedCount = value;
-        }
+    public static void SetPlayedCount(int value) => _playedCount = value;
 
-        public static float GetCooldownLeft()
-        {
-            return AvailableAgain - Server.CurrentTime;
-        }
+    public static float GetCooldownLeft(float now) => _availableAgain - now;
 
-        public static void SetCooldown(float value)
-        {
-            AvailableAgain = value;
-        }
-    }
+    public static void SetCooldown(float value) => _availableAgain = value;
 }

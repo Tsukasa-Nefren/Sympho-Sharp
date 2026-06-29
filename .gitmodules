@@ -1,0 +1,3 @@
+[submodule "MS_Audio"]
+	path = MS_Audio
+	url = https://github.com/Tsukasa-Nefren/MS_Audio.git

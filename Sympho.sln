@@ -5,6 +5,8 @@ VisualStudioVersion = 17.9.34607.119
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Sympho", "Sympho.csproj", "{63151E9E-4B7D-4771-BBBC-7B94DD8309A8}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Audio.Shared", "MS_Audio\Shared\Audio.Shared.csproj", "{3A766E74-D999-41F9-B7DE-2D2A4F8A8417}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -15,6 +17,10 @@ Global
 		{63151E9E-4B7D-4771-BBBC-7B94DD8309A8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{63151E9E-4B7D-4771-BBBC-7B94DD8309A8}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{63151E9E-4B7D-4771-BBBC-7B94DD8309A8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3A766E74-D999-41F9-B7DE-2D2A4F8A8417}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3A766E74-D999-41F9-B7DE-2D2A4F8A8417}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3A766E74-D999-41F9-B7DE-2D2A4F8A8417}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3A766E74-D999-41F9-B7DE-2D2A4F8A8417}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

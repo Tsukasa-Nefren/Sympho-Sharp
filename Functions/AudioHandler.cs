@@ -1,97 +1,77 @@
-﻿using System;
+using System;
 using System.IO;
-using System.Linq;
-using System.Reflection;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Logging;
 
-namespace Sympho.Functions
+namespace Sympho.Functions;
+
+public class AudioHandler
 {
-    public class AudioHandler
+    private readonly ILogger<Sympho> _logger;
+    private Sympho? _plugin;
+
+    private static readonly Regex RxDelay =
+        new(@"Max\s+delay\s+exceeded:\s*(?<ms>\d+)\s*milliseconds", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex RxStart =
+        new(@"Start\s+playing", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public AudioHandler(ILogger<Sympho> logger) => _logger = logger;
+
+    public void Initialize(Sympho plugin) => _plugin = plugin;
+
+    public bool PlayAudio(string source)
     {
-        private readonly ILogger<Sympho> _logger;
-        private Sympho? _plugin;
-        private Subtitles? _subtitles;
-
-        // Regex for parsing log lines for subtitle delay correction
-        private static readonly Regex RxDelay =
-            new(@"Max\s+delay\s+exceeded:\s*(?<ms>\d+)\s*milliseconds", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-        private static readonly Regex RxStart =
-            new(@"Start\s+playing", RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-        public AudioHandler(ILogger<Sympho> logger) => _logger = logger;
-        
-        public void Initialize(Sympho plugin) => _plugin = plugin;
-
-        public void SetSubtitles(Subtitles subtitles) => _subtitles = subtitles;
-        
-        public void PlayAudio(string source)
+        try
         {
-            try
+            if (!File.Exists(source))
             {
-                if (!File.Exists(source))
-                {
-                    _logger.LogWarning("[AudioHandler] PlayAudio: file not found: {src}", source);
-                    return;
-                }
-
-                _subtitles?.OnAudioStarted();
-                var volume = GetVolumeOrDefault();
-                global::Audio.PlayFromFile(source, volume);
-
-                _logger.LogInformation("[AudioHandler] Playback started: {path} (vol={vol})", source, volume);
+                _logger.LogWarning("[AudioHandler] PlayAudio: file not found: {src}", source);
+                return false;
             }
-            catch (Exception ex)
+
+            var audio = _plugin?.GetAudio();
+            if (audio == null)
             {
-                _logger.LogWarning(ex, "[AudioHandler] PlayAudio failed");
+                _logger.LogWarning("[AudioHandler] Audio module is not available.");
+                return false;
+            }
+
+            audio.PlayGlobal(Sympho.AudioChannel, source);
+            _logger.LogInformation("[AudioHandler] Playback started: {path}", source);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "[AudioHandler] PlayAudio failed");
+            return false;
+        }
+    }
+
+    public void StopAudio()
+    {
+        try { _plugin?.GetAudio()?.StopGlobal(Sympho.AudioChannel); } catch { }
+    }
+
+    public void ProcessConsoleMessage(string? line)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return;
+
+        try
+        {
+            if (RxStart.IsMatch(line))
+            {
+                return;
+            }
+
+            var m = RxDelay.Match(line);
+            if (m.Success && int.TryParse(m.Groups["ms"].Value, out var ms))
+            {
+                _logger.LogDebug("[AudioHandler] Audio delay reported: {ms}ms", ms);
             }
         }
-
-        public static void StopAudio()
+        catch
         {
-            try { global::Audio.StopAllPlaying(); } catch { /* ignore */ }
-        }
-
-        /// <summary>
-        /// Forwards console/log lines to the Subtitles module to detect delays and start events.
-        /// </summary>
-        public void ProcessConsoleMessage(string? line)
-        {
-            if (string.IsNullOrWhiteSpace(line)) return;
-
-            try
-            {
-                if (RxStart.IsMatch(line))
-                {
-                    _subtitles?.OnAudioStarted();
-                    return;
-                }
-
-                var m = RxDelay.Match(line);
-                if (m.Success && int.TryParse(m.Groups["ms"].Value, out var ms))
-                {
-                    _subtitles?.ReportAudioDelay(ms);
-                }
-            }
-            catch
-            {
-                // ignore
-            }
-        }
-
-        private float GetVolumeOrDefault()
-        {
-            try
-            {
-                if (_plugin == null) return 1.0f;
-                // A more direct and safer way to get the FakeConVar value.
-                var cvar = _plugin.CVAR_Volume;
-                if (cvar != null) return cvar.Value;
-            }
-            catch { /* ignore */ }
-
-            return 1.0f;
         }
     }
 }

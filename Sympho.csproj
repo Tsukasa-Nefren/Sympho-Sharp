@@ -4,54 +4,65 @@
     Project Configuration for Sympho
     This file defines dependencies and custom build steps.
     Key features include:
-    - Automatic download of yt-dlp and ffmpeg on Windows builds.
-    - Creation of necessary directory structures (lang, sounds, sympho_tmp).
+    - Automatic download of yt-dlp on Windows builds.
+    - Creation of necessary directory structures (sympho_tmp).
   -->
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
 
-    <!-- This ensures that dependency DLLs (like Newtonsoft.Json) are copied to the output folder. -->
+    <!-- This ensures that required dependency DLLs are copied to the output folder. -->
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 
     <!-- External tool download URLs -->
     <YtDlpUrl>https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe</YtDlpUrl>
-    <FfmpegZipUrl>https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip</FfmpegZipUrl>
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- The CounterStrikeSharp.API is provided by the server environment, so we exclude it from the runtime assets. -->
-    <PackageReference Include="CounterStrikeSharp.API" Version="1.0.337">
-      <ExcludeAssets>runtime</ExcludeAssets>
-    </PackageReference>
-
-    <!-- External libraries required by the plugin. -->
-    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
-    <PackageReference Include="YoutubeDLSharp" Version="1.1.2" />
+    <PackageReference Include="ModSharp.Sharp.Shared" Version="*" PrivateAssets="all" />
+    <PackageReference Include="ModSharp.Sharp.Modules.AdminManager.Shared" Version="*" PrivateAssets="all" />
+    <PackageReference Include="ModSharp.Sharp.Modules.LocalizerManager.Shared" Version="*" PrivateAssets="all" />
+    <PackageReference Include="ModSharp.Sharp.Modules.MenuManager.Shared" Version="*" PrivateAssets="all" />
+    <PackageReference Include="Ptr.Shared" Version="1.1.30" PrivateAssets="all" />
   </ItemGroup>
 
-  <!-- This section ensures that resource files are copied to the build output directory. -->
   <ItemGroup>
-    <Content Include="lang\**\*">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
-    <Content Include="sounds\**\*">
-      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
-    </Content>
+    <ProjectReference Include="MS_Audio\Shared\Audio.Shared.csproj" Private="false" ExcludeAssets="runtime" />
   </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="MS_Audio\**\*.cs" />
+  </ItemGroup>
+
+  <Target Name="CleanupModSharpProvidedAssemblies" AfterTargets="CopyFilesToOutputDirectory">
+    <ItemGroup>
+      <FilesToDelete Include="$(OutDir)Microsoft.Extensions.*.dll" />
+      <FilesToDelete Include="$(OutDir)System.*.dll" />
+      <FilesToDelete Include="$(OutDir)Google.Protobuf.dll" />
+      <FilesToDelete Include="$(OutDir)Sharp.Shared.dll" />
+      <FilesToDelete Include="$(OutDir)Sharp.Modules.AdminManager.Shared.dll" />
+      <FilesToDelete Include="$(OutDir)Sharp.Modules.LocalizerManager.Shared.dll" />
+      <FilesToDelete Include="$(OutDir)Sharp.Modules.MenuManager.Shared.dll" />
+      <FilesToDelete Include="$(OutDir)Audio.Shared.dll" />
+      <FilesToDelete Include="$(OutDir)yt-dlp" Condition="'$(OS)' == 'Windows_NT'" />
+      <FilesToDelete Include="$(OutDir)lang\**\*" />
+    </ItemGroup>
+    <Delete Files="@(FilesToDelete)" ContinueOnError="true" />
+    <RemoveDir Directories="$(OutDir)lang" ContinueOnError="true" />
+  </Target>
 
   <!-- 
     ==========================================================================================
     CUSTOM BUILD TARGETS: Automatic Tool Fetcher for Windows
     ==========================================================================================
-    The following targets automate the download of yt-dlp and ffmpeg for Windows users.
+    The following targets automate the download of yt-dlp for Windows users.
     
     ATTENTION LINUX/MACOS USERS: 
-    These scripts will not run on your system. You must manually download 'yt-dlp' and 'ffmpeg' 
-    and place the executables in the plugin's root directory (next to Sympho.dll).
+    These scripts will not run on your system. You must manually download 'yt-dlp'
+    and place it in the plugin's root directory (next to Sympho.dll).
     ==========================================================================================
   -->
 
@@ -67,33 +78,11 @@
       <Ps1Lines Include="$ToolsDir = (Get-Location).ProviderPath" />
       <Ps1Lines Include="Write-Host &quot;[FetchTools] Working Directory: $ToolsDir&quot;" />
       <Ps1Lines Include="$yt  = Join-Path $ToolsDir 'yt-dlp.exe'" />
-      <Ps1Lines Include="$ff  = Join-Path $ToolsDir 'ffmpeg.exe'" />
-      <Ps1Lines Include="$zip = Join-Path $ToolsDir 'ffmpeg.zip'" />
-      <Ps1Lines Include="$unz = Join-Path $ToolsDir 'ffmpeg_zip'" />
       
       <!-- Download yt-dlp -->
       <Ps1Lines Include="if (Test-Path $yt) { Write-Host '[FetchTools] yt-dlp.exe already exists. Skipping.' } else {" />
       <Ps1Lines Include="  Write-Host '[FetchTools] Downloading yt-dlp...'" />
       <Ps1Lines Include="  try { Invoke-WebRequest -Uri '$(YtDlpUrl)' -OutFile $yt -UseBasicParsing -TimeoutSec 120 } catch { Write-Host (&quot;[FetchTools] WARNING: Failed to download yt-dlp: {0}&quot; -f $_.Exception.Message) }" />
-      <Ps1Lines Include="}" />
-
-      <!-- Download and extract ffmpeg -->
-      <Ps1Lines Include="if (Test-Path $ff) { Write-Host '[FetchTools] ffmpeg.exe already exists. Skipping.' } else {" />
-      <Ps1Lines Include="  Write-Host '[FetchTools] Downloading ffmpeg...'" />
-      <Ps1Lines Include="  try {" />
-      <Ps1Lines Include="    if (Test-Path $unz) { Remove-Item $unz -Recurse -Force }" />
-      <Ps1Lines Include="    if (Test-Path $zip) { Remove-Item $zip -Force }" />
-      <Ps1Lines Include="    Invoke-WebRequest -Uri '$(FfmpegZipUrl)' -OutFile $zip -UseBasicParsing -TimeoutSec 300" />
-      <Ps1Lines Include="    Write-Host '[FetchTools] Extracting ffmpeg...'" />
-      <Ps1Lines Include="    Add-Type -AssemblyName System.IO.Compression.FileSystem" />
-      <Ps1Lines Include="    [System.IO.Compression.ZipFile]::ExtractToDirectory($zip, $unz)" />
-      <Ps1Lines Include="    $found = Get-ChildItem $unz -Recurse -Filter ffmpeg.exe | Select-Object -First 1" />
-      <Ps1Lines Include="    if ($found) { Copy-Item $found.FullName $ff -Force; Write-Host '[FetchTools] ffmpeg.exe extracted successfully.' } else { Write-Host '[FetchTools] ERROR: ffmpeg.exe not found in zip archive.' }" />
-      <Ps1Lines Include="  } catch { Write-Host (&quot;[FetchTools] WARNING: Failed to download or extract ffmpeg: {0}&quot; -f $_.Exception.Message) }" />
-      <Ps1Lines Include="  finally {" />
-      <Ps1Lines Include="    if (Test-Path $zip) { Remove-Item $zip -Force }" />
-      <Ps1Lines Include="    if (Test-Path $unz) { Remove-Item $unz -Recurse -Force }" />
-      <Ps1Lines Include="  }" />
       <Ps1Lines Include="}" />
     </ItemGroup>
 
@@ -114,8 +103,6 @@
 
   <!-- STEP 3: Ensure all necessary directories exist in the output folder after the build. -->
   <Target Name="EnsureOutputDirs" AfterTargets="Build">
-    <MakeDir Directories="$(TargetDir)sounds" />
-    <MakeDir Directories="$(TargetDir)lang" />
     <!-- This directory must match the default 'TmpDir' value in Settings.cs -->
     <MakeDir Directories="$(TargetDir)sympho_tmp" />
   </Target>

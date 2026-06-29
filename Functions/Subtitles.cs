@@ -4,550 +4,630 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Runtime.InteropServices;
+using System.Net;
+using System.Net.Http;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
-using CounterStrikeSharp.API;
-using CounterStrikeSharp.API.Core;
-using CounterStrikeSharp.API.Modules.Timers;
 
-namespace Sympho.Functions
+namespace Sympho.Functions;
+
+public sealed class SubtitleCue
 {
-    public class SubtitleCue
+    public double StartTime { get; set; }
+    public double EndTime { get; set; }
+    public string Text { get; set; } = "";
+    public int LinePercent { get; set; } = 90;
+}
+
+public sealed class Subtitles : IDisposable
+{
+    private const double LingerDuration = 5.0;
+
+    private readonly CacheManager _cache;
+    private readonly ILogger<Sympho> _logger;
+    private readonly Dictionary<string, string> _vttStyles = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _predefinedColors = new(StringComparer.OrdinalIgnoreCase)
     {
-        public double StartTime { get; set; }
-        public double EndTime   { get; set; }
-        public string Text      { get; set; } = "";
-        public int LinePercent { get; set; } = 90; 
-        public string Position { get; set; } = ""; // align:center, align:left, align:right
-        public string Size { get; set; } = ""; // size:80%
+        ["white"] = "#FFFFFF",
+        ["black"] = "#000000",
+        ["red"] = "#FF0000",
+        ["green"] = "#00FF00",
+        ["blue"] = "#0000FF",
+        ["yellow"] = "#FFFF00",
+        ["cyan"] = "#00FFFF",
+        ["magenta"] = "#FF00FF",
+        ["silver"] = "#C0C0C0",
+        ["gray"] = "#808080",
+        ["grey"] = "#808080",
+        ["maroon"] = "#800000",
+        ["olive"] = "#808000",
+        ["lime"] = "#00FF00",
+        ["aqua"] = "#00FFFF",
+        ["teal"] = "#008080",
+        ["navy"] = "#000080",
+        ["fuchsia"] = "#FF00FF",
+        ["purple"] = "#800080",
+        ["orange"] = "#FFA500",
+        ["pink"] = "#FFC0CB",
+        ["brown"] = "#A52A2A",
+        ["gold"] = "#FFD700",
+        ["violet"] = "#EE82EE",
+        ["bg_transparent"] = "transparent",
+        ["bg_black"] = "#000000",
+        ["bg_blue"] = "#0000FF",
+        ["bg_cyan"] = "#00FFFF",
+        ["bg_green"] = "#00FF00",
+        ["bg_magenta"] = "#FF00FF",
+        ["bg_red"] = "#FF0000",
+        ["bg_white"] = "#FFFFFF",
+        ["bg_yellow"] = "#FFFF00"
+    };
+
+    private Sympho? _plugin;
+    private string? _ytDlpPath;
+    private Guid? _subtitleTimer;
+    private List<SubtitleCue> _currentSubtitles = [];
+    private List<SubtitleCue> _lastShownCues = [];
+
+    public Subtitles(CacheManager cache, ILogger<Sympho> logger)
+    {
+        _cache = cache;
+        _logger = logger;
     }
 
-    public class Subtitles : IDisposable
+    public void Initialize(Sympho plugin)
     {
-        private Sympho? _plugin;
-        private readonly CacheManager _cache;
-        private readonly ILogger<Sympho> _logger;
-        private string? _ytDlpPath;
+        _plugin = plugin;
+        _ytDlpPath = Youtube.FindYtDlpPath(plugin.ModuleDirectory);
 
-        // 다양한 색상 형식 지원을 위한 사전들
-        private readonly Dictionary<string, string> _vttStyles = new();
-        private readonly Dictionary<string, string> _predefinedColors = new()
+        if (_ytDlpPath is null)
         {
-            // HTML 색상 이름들
-            { "white", "#FFFFFF" }, { "black", "#000000" }, { "red", "#FF0000" }, { "green", "#00FF00" },
-            { "blue", "#0000FF" }, { "yellow", "#FFFF00" }, { "cyan", "#00FFFF" }, { "magenta", "#FF00FF" },
-            { "silver", "#C0C0C0" }, { "gray", "#808080" }, { "grey", "#808080" }, { "maroon", "#800000" },
-            { "olive", "#808000" }, { "lime", "#00FF00" }, { "aqua", "#00FFFF" }, { "teal", "#008080" },
-            { "navy", "#000080" }, { "fuchsia", "#FF00FF" }, { "purple", "#800080" }, { "orange", "#FFA500" },
-            { "pink", "#FFC0CB" }, { "brown", "#A52A2A" }, { "gold", "#FFD700" }, { "violet", "#EE82EE" },
-            
-            // 유튜브에서 자주 사용하는 색상들
-            { "bg_transparent", "transparent" }, { "bg_black", "#000000" }, { "bg_blue", "#0000FF" },
-            { "bg_cyan", "#00FFFF" }, { "bg_green", "#00FF00" }, { "bg_magenta", "#FF00FF" },
-            { "bg_red", "#FF0000" }, { "bg_white", "#FFFFFF" }, { "bg_yellow", "#FFFF00" }
-        };
+            _logger.LogWarning("[Subtitles] yt-dlp executable not found in plugin directory. Subtitle downloads will be skipped.");
+        }
+    }
 
-        private double _subtitleLeadTime = 0.0;
-        private const double MAX_LEAD_TIME = 2.0;
-        private const double MIN_LEAD_TIME = 0.0;
-
-        // [수정됨] 시간 드리프트 보정 계수를 하드코딩합니다.
-        // 자막이 점점 늦어지면 이 값을 1.0보다 작게 설정 (예: 0.999)
-        // 자막이 점점 빨라지면 이 값을 1.0보다 크게 설정 (예: 1.001)
-        private const double _driftCorrectionFactor = 1.007; 
-
-        private double _audioProgressSec = 0.0;
-        private bool _isAudioPlaying = false;
-        
-        private List<SubtitleCue> _currentSubtitles = new();
-        
-        private CounterStrikeSharp.API.Modules.Timers.Timer? _subtitleTimer;
-        
-        private const double LINGER_DURATION = 5.0;
-        private List<SubtitleCue> _lastShownCues = new List<SubtitleCue>();
-
-        private int _playListenerId = -1;
-        private int _playStartListenerId = -1;
-        private int _playEndListenerId = -1;
-        private bool _audioApiRegistered = false;
-
-        private Audio.PlayHandler? _playHandler;
-        private Audio.PlayStartHandler? _playStartHandler;
-        private Audio.PlayEndHandler? _playEndHandler;
-
-        private float _playbackStartTime = 0f;
-
-        public Subtitles(ILogger<Sympho> logger, CacheManager cache) 
-        { 
-            _logger = logger; 
-            _cache = cache; 
+    public async Task<List<SubtitleCue>> FetchAndParseSubtitlesAsync(string url, string? langCode, int startSec, int maxDuration)
+    {
+        if (string.IsNullOrWhiteSpace(langCode) || _plugin is null || _ytDlpPath is null)
+        {
+            return [];
         }
 
-        public void Initialize(Sympho plugin)
+        try
         {
-            _plugin = plugin;
-            var root = plugin.ModuleDirectory;
-            var candidates = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? new[] { "yt-dlp.exe", "yt-dlp" } : new[] { "yt-dlp", "yt-dlp.exe" };
-            foreach (var name in candidates)
-            {
-                var full = Path.Combine(root, name);
-                if (File.Exists(full)) { _ytDlpPath = full; break; }
-            }
-            if (_ytDlpPath is null) _logger.LogWarning("[Subtitles] yt-dlp executable not found in plugin directory. Subtitle downloads will be skipped.");
-            else _logger.LogInformation("[Subtitles] yt-dlp found at: {path}", _ytDlpPath);
+            var text = await FetchSubtitleTextAsync(url, langCode);
+            List<SubtitleCue> cues = string.IsNullOrWhiteSpace(text) ? [] : ParseVttContent(text);
+            return ShiftAndTrimCues(cues, startSec, maxDuration);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[Subtitles] Failed to fetch subtitles for language {lang}.", langCode);
+            return [];
+        }
+    }
 
-            RegisterAudioListeners();
+    public void StartRealtimeSubtitles(List<SubtitleCue> cues)
+    {
+        if (_plugin is null || cues.Count == 0)
+        {
+            return;
         }
 
-        private void RegisterAudioListeners()
+        StopRealtimeSubtitles();
+        _currentSubtitles = cues;
+        _lastShownCues = [];
+        _subtitleTimer = _plugin.StartRepeatingTimer(UpdateSubtitles, 0.05);
+        _logger.LogInformation("[Subtitles] Started realtime subtitles with {count} cues.", cues.Count);
+    }
+
+    public void StopRealtimeSubtitles()
+    {
+        if (_plugin is not null && _subtitleTimer is { } timer)
         {
-            try
-            {
-                _playHandler = OnAudioProgress;
-                _playStartHandler = OnAudioStarted;
-                _playEndHandler = OnAudioEnded;
-                _playListenerId = Audio.RegisterPlayListener(_playHandler);
-                _playStartListenerId = Audio.RegisterPlayStartListener(_playStartHandler);
-                _playEndListenerId = Audio.RegisterPlayEndListener(_playEndHandler);
-                _audioApiRegistered = true;
-                _logger.LogInformation("[Subtitles] Audio API listeners registered successfully. IDs: Play={0}, Start={1}, End={2}", 
-                    _playListenerId, _playStartListenerId, _playEndListenerId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "[Subtitles] Failed to register audio API listeners. Subtitle sync may not work properly.");
-                _audioApiRegistered = false;
-            }
+            try { _plugin.StopTimer(timer); } catch { }
         }
 
-        private void OnAudioProgress(int slot, int progressMs) { }
+        _subtitleTimer = null;
+        _currentSubtitles.Clear();
+        _lastShownCues.Clear();
+        _vttStyles.Clear();
 
-        private void OnAudioStarted(int slot)
+    }
+
+    public void Dispose()
+    {
+        StopRealtimeSubtitles();
+    }
+
+    private async Task<string?> FetchSubtitleTextAsync(string url, string langCode)
+    {
+        var json = await FetchInfoJson(url);
+        if (json is null)
         {
-            Server.NextFrame(() =>
-            {
-                if (slot == -1)
-                {
-                    _audioProgressSec = 0.0;
-                    _isAudioPlaying = true;
-                    _playbackStartTime = Server.CurrentTime;
-                    _logger.LogInformation("[Subtitles] Audio started, resetting progress and starting internal timer.");
-                }
-            });
-        }
-
-        private void OnAudioEnded(int slot)
-        {
-            Server.NextFrame(() =>
-            {
-                if (slot == -1)
-                {
-                    _isAudioPlaying = false;
-                    _logger.LogInformation("[Subtitles] Audio ended.");
-                    
-                    foreach (var p in Utilities.GetPlayers())
-                        if (p != null && p.IsValid)
-                            try { p.PrintToCenterHtml(""); } catch { }
-                }
-            });
-        }
-        
-        public void OnAudioStarted() 
-        { 
-            _audioProgressSec = 0.0;
-            _isAudioPlaying = true;
-        }
-
-        public void ReportAudioDelay(double delayMilliseconds)
-        {
-            var delaySeconds = delayMilliseconds / 1000.0;
-            if (delaySeconds > 0.05)
-            {
-                var newLeadTime = Math.Min(MAX_LEAD_TIME, Math.Max(MIN_LEAD_TIME, _subtitleLeadTime + delaySeconds * 0.8));
-                if (Math.Abs(newLeadTime - _subtitleLeadTime) > 0.01)
-                {
-                    _subtitleLeadTime = newLeadTime;
-                    _logger.LogInformation("[Subtitles] Audio delay detected. Adjusted subtitle lead time to {lead:F3}s.", _subtitleLeadTime);
-                }
-            }
-        }
-
-        public async Task<List<SubtitleCue>> FetchAndParseSubtitlesAsync(string url, string? langCode)
-        {
-            if (string.IsNullOrWhiteSpace(langCode)) return new List<SubtitleCue>();
-            
-            var cues = new List<SubtitleCue>();
-            try
-            {
-                if (_plugin == null || _ytDlpPath == null || !File.Exists(_ytDlpPath)) return cues;
-                var videoId = Youtube.GetYouTubeVideoId(url);
-                if (string.IsNullOrEmpty(videoId)) return cues;
-                var tmpDir = Path.GetDirectoryName(_cache.GetPathForUrl(url))!;
-                var outTemplate = Path.Combine(tmpDir, "%(id)s.%(ext)s");
-                
-                var psi = new ProcessStartInfo
-                {
-                    FileName = _ytDlpPath,
-                    WorkingDirectory = _plugin.ModuleDirectory,
-                    Arguments = $"--no-warnings --ignore-config --no-check-certificates --skip-download --write-subs --sub-langs \"{langCode}\" --convert-subs vtt --output \"{outTemplate}\" \"{url}\"",
-                    UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true, CreateNoWindow = true
-                };
-
-                using var p = Process.Start(psi);
-                if (p == null) return cues;
-                await p.WaitForExitAsync(new CancellationTokenSource(TimeSpan.FromMinutes(2)).Token);
-                
-                var vttFile = Directory.EnumerateFiles(tmpDir, $"{videoId}*.vtt")
-                                       .Select(fp => new FileInfo(fp))
-                                       .FirstOrDefault(f => f.Name.Contains(langCode));
-
-                if (vttFile == null) 
-                {
-                    _logger.LogWarning("[Subtitles] Could not find a downloaded VTT file for language '{langCode}'.", langCode);
-                    return cues;
-                }
-                cues = await ParseVttFile(vttFile.FullName);
-                _logger.LogInformation("[Subtitles] Successfully parsed {count} subtitle cues from VTT file.", cues.Count);
-            }
-            catch (Exception ex) 
-            { 
-                _logger.LogError(ex, "An error occurred while fetching subtitles for language '{langCode}'", langCode); 
-            }
-            return cues;
-        }
-
-        private async Task<List<SubtitleCue>> ParseVttFile(string vttPath)
-        {
-            var cues = new List<SubtitleCue>();
-            try
-            {
-                var content = await File.ReadAllTextAsync(vttPath, Encoding.UTF8);
-                if (string.IsNullOrWhiteSpace(content)) return cues;
-                ParseVttStyleBlock(content);
-                content = Regex.Replace(content, @"NOTE\s+.*?(?=\r?\n\r?\n)", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
-                var blocks = Regex.Split(content, @"(?:\r?\n){2,}");
-                
-                foreach (var block in blocks)
-                {
-                    var trimmed = block.Trim();
-                    if (string.IsNullOrEmpty(trimmed)) continue;
-                    
-                    if (trimmed.StartsWith("WEBVTT") || trimmed.StartsWith("Kind:") || trimmed.StartsWith("Language:") || trimmed.StartsWith("STYLE") || trimmed.StartsWith("NOTE")) continue;
-                    var parsedCue = ParseSingleCue(trimmed);
-                    if (parsedCue != null) cues.Add(parsedCue);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to parse VTT file: {path}", vttPath);
-            }
-            return cues.OrderBy(c => c.StartTime).ToList();
-        }
-
-        private SubtitleCue? ParseSingleCue(string cueBlock)
-        {
-            try
-            {
-                var lines = cueBlock.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
-                string? timeLine = null;
-                int timeLineIndex = -1;
-                for (int i = 0; i < lines.Length; i++)
-                {
-                    var line = lines[i].Trim();
-                    if (Regex.IsMatch(line, @"[\d:.]+\s*-->\s*[\d:.]+"))
-                    {
-                        timeLine = line;
-                        timeLineIndex = i;
-                        break;
-                    }
-                }
-                if (timeLine == null) return null;
-                var timeMatch = Regex.Match(timeLine, @"^([\d:.,]+)\s*-->\s*([\d:.,]+)(.*)");
-                if (!timeMatch.Success) return null;
-                var start = ParseTimeToSeconds(timeMatch.Groups[1].Value);
-                var end = ParseTimeToSeconds(timeMatch.Groups[2].Value);
-                if (end <= start) return null;
-                var attributes = timeMatch.Groups[3].Value.Trim();
-                int linePercent = 90;
-                var lineMatch = Regex.Match(attributes, @"line:(-?\d+(?:\.\d+)?%?)");
-                if (lineMatch.Success && lineMatch.Groups[1].Value.EndsWith("%") && int.TryParse(lineMatch.Groups[1].Value.TrimEnd('%'), out int parsedPercent))
-                {
-                    linePercent = Math.Max(0, Math.Min(100, parsedPercent));
-                }
-                string position = "";
-                var alignMatch = Regex.Match(attributes, @"align:(start|center|end|left|middle|right)");
-                if (alignMatch.Success) position = alignMatch.Groups[1].Value;
-                string size = "";
-                var sizeMatch = Regex.Match(attributes, @"size:(\d+(?:\.\d+)?%?)");
-                if (sizeMatch.Success) size = sizeMatch.Groups[1].Value;
-                var textLines = lines.Skip(timeLineIndex + 1).Where(l => !string.IsNullOrWhiteSpace(l)).ToList();
-                if (!textLines.Any()) return null;
-                var rawText = string.Join(" ", textLines).Trim();
-                if (string.IsNullOrWhiteSpace(rawText)) return null;
-                var htmlText = VttParser_Enhanced(rawText);
-                if (!string.IsNullOrWhiteSpace(htmlText))
-                {
-                    return new SubtitleCue { StartTime = start, EndTime = end, Text = htmlText, LinePercent = linePercent, Position = position, Size = size };
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogWarning(ex, "Failed to parse individual cue block");
-            }
             return null;
         }
 
-        private void ParseVttStyleBlock(string fileContent)
+        var subtitleUrl = FindSubtitleUrl(json, langCode);
+        if (subtitleUrl is null)
         {
-            _vttStyles.Clear();
-            var styleMatches = Regex.Matches(fileContent, @"STYLE\s*([\s\S]*?)(?=\r?\n\r?\n|$)", RegexOptions.IgnoreCase);
-            foreach (Match styleMatch in styleMatches) ParseCssStyles(styleMatch.Groups[1].Value);
-            var noteMatches = Regex.Matches(fileContent, @"NOTE.*?Style:\s*([\s\S]*?)(?=\r?\n\r?\n|$)", RegexOptions.IgnoreCase);
-            foreach (Match noteMatch in noteMatches) ParseCssStyles(noteMatch.Groups[1].Value);
+            _logger.LogWarning("[Subtitles] Could not find VTT URL for language {lang}.", langCode);
+            return null;
         }
 
-        private void ParseCssStyles(string styleBlock)
+        return await DownloadSubtitleTextAsync(subtitleUrl);
+    }
+
+    private async Task<string?> FetchInfoJson(string url)
+    {
+        if (_ytDlpPath is null || _plugin is null)
         {
-            try
-            {
-                var cssRules = Regex.Matches(styleBlock, @"([^{]+)\s*\{\s*([^}]+)\s*\}", RegexOptions.IgnoreCase);
-                foreach (Match rule in cssRules)
-                {
-                    var selector = rule.Groups[1].Value.Trim();
-                    var properties = rule.Groups[2].Value.Trim();
-                    var colorMatch = Regex.Match(properties, @"color:\s*([^;]+)", RegexOptions.IgnoreCase);
-                    if (colorMatch.Success)
-                    {
-                        var hexColor = ParseColorValue(colorMatch.Groups[1].Value.Trim());
-                        if (!string.IsNullOrEmpty(hexColor))
-                        {
-                            var classMatches = Regex.Matches(selector, @"\.([a-zA-Z0-9_-]+)", RegexOptions.IgnoreCase);
-                            foreach (Match classMatch in classMatches)
-                            {
-                                var className = classMatch.Groups[1].Value.ToLowerInvariant();
-                                _vttStyles[className] = hexColor;
-                                _vttStyles["c." + className] = hexColor;
-                            }
-                            var cueMatch = Regex.Match(selector, @"::cue\s*\(\s*\.?([a-zA-Z0-9_-]+)\s*\)", RegexOptions.IgnoreCase);
-                            if (cueMatch.Success)
-                            {
-                                var className = cueMatch.Groups[1].Value.ToLowerInvariant();
-                                _vttStyles[className] = hexColor;
-                                _vttStyles["c." + className] = hexColor;
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex) { _logger.LogWarning(ex, "Error parsing CSS styles from VTT"); }
+            return null;
         }
 
-        private string ParseColorValue(string colorValue)
+        var psi = new ProcessStartInfo
         {
-            colorValue = colorValue.Trim().ToLowerInvariant();
-            if (colorValue.StartsWith("#")) return colorValue;
-            var rgbMatch = Regex.Match(colorValue, @"rgba?\s*\((\d+),(\d+),(\d+)");
-            if (rgbMatch.Success)
-            {
-                int r = int.Parse(rgbMatch.Groups[1].Value);
-                int g = int.Parse(rgbMatch.Groups[2].Value);
-                int b = int.Parse(rgbMatch.Groups[3].Value);
-                return $"#{r:X2}{g:X2}{b:X2}";
-            }
-            if (_predefinedColors.TryGetValue(colorValue, out var namedColor)) return namedColor;
-            return "";
+            FileName = _ytDlpPath,
+            WorkingDirectory = _plugin.ModuleDirectory,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+
+        psi.ArgumentList.Add("--no-warnings");
+        psi.ArgumentList.Add("--ignore-config");
+        psi.ArgumentList.Add("--no-check-certificates");
+        psi.ArgumentList.Add("--skip-download");
+        psi.ArgumentList.Add("--dump-single-json");
+        Youtube.AddYtDlpJavaScriptRuntime(psi);
+        psi.ArgumentList.Add(url);
+
+        using var process = Process.Start(psi);
+        if (process is null)
+        {
+            return null;
         }
 
-        private string VttParser_Enhanced(string vttText)
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var outputTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
+        var errorTask = process.StandardError.ReadToEndAsync(timeout.Token);
+        try
         {
-            if (string.IsNullOrWhiteSpace(vttText)) return string.Empty;
-            string cleanedText = vttText;
-            cleanedText = Regex.Replace(cleanedText, @"\s+", " ").Replace("&nbsp;", " ").Replace("&#160;", " ").Replace("\u00A0", " ");
-            cleanedText = cleanedText.Replace("&amp;", "&").Replace("&lt;", "<").Replace("&gt;", ">").Replace("&quot;", "\"").Replace("&#39;", "'");
-            var result = new StringBuilder();
-            var tagStack = new Stack<string>();
-            int i = 0;
-            while (i < cleanedText.Length)
-            {
-                if (cleanedText[i] == '<')
-                {
-                    int tagEnd = cleanedText.IndexOf('>', i);
-                    if (tagEnd == -1) { result.Append(cleanedText[i++]); continue; }
-                    string tagContent = cleanedText.Substring(i + 1, tagEnd - i - 1).Trim();
-                    i = tagEnd + 1;
-                    if (Regex.IsMatch(tagContent, @"^[\d:.]+$")) continue;
-                    if (tagContent.StartsWith("/")) { if (tagStack.Count > 0) result.Append(tagStack.Pop()); }
-                    else ProcessOpenTag(tagContent, result, tagStack);
-                }
-                else result.Append(cleanedText[i++]);
-            }
-            while (tagStack.Count > 0) result.Append(tagStack.Pop());
-            return result.ToString().Trim();
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            process.Kill();
+            _logger.LogError("[Subtitles] yt-dlp timed out while fetching subtitle metadata.");
+            return null;
         }
 
-        private void ProcessOpenTag(string tagContent, StringBuilder result, Stack<string> tagStack)
+        if (process.ExitCode != 0)
         {
-            var parts = tagContent.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
-            if (parts.Length == 0) return;
-            var tagName = parts[0].ToLowerInvariant();
-            string htmlOpenTag = "", htmlCloseTag = "";
-            switch (tagName)
+            _logger.LogError("[Subtitles] yt-dlp failed fetching subtitle metadata: {error}", await errorTask);
+            return null;
+        }
+
+        return await outputTask;
+    }
+
+    private static string? FindSubtitleUrl(string json, string langCode)
+    {
+        using var doc = JsonDocument.Parse(json);
+        return FindSubtitleUrl(doc.RootElement, "subtitles", langCode) ??
+               FindSubtitleUrl(doc.RootElement, "automatic_captions", langCode);
+    }
+
+    private static string? FindSubtitleUrl(JsonElement root, string bucket, string langCode)
+    {
+        if (!root.TryGetProperty(bucket, out var subtitles) ||
+            subtitles.ValueKind != JsonValueKind.Object ||
+            !subtitles.TryGetProperty(langCode, out var formats) ||
+            formats.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var format in formats.EnumerateArray())
+        {
+            if (TryGetString(format, "ext")?.Equals("vtt", StringComparison.OrdinalIgnoreCase) == true)
             {
-                case "b": htmlOpenTag = "<b>"; htmlCloseTag = "</b>"; break;
-                case "i": htmlOpenTag = "<i>"; htmlCloseTag = "</i>"; break;
-                case "u": htmlOpenTag = "<u>"; htmlCloseTag = "</u>"; break;
-                case "s": htmlOpenTag = "<s>"; htmlCloseTag = "</s>"; break;
-                case "v":
-                    var voiceMatch = Regex.Match(tagContent, @"v\s+([^>]+)");
-                    if (voiceMatch.Success) result.Append($"<i>[{voiceMatch.Groups[1].Value.Trim()}]:</i> ");
-                    break;
-                case "rt": return;
-                default:
-                    string colorHex = "";
-                    if (_vttStyles.TryGetValue(tagName, out var styleColor) || (tagName.StartsWith("c.") && _vttStyles.TryGetValue(tagName, out styleColor)) || _predefinedColors.TryGetValue(tagName, out styleColor))
-                    {
-                        colorHex = styleColor;
-                    }
-                    if (!string.IsNullOrEmpty(colorHex))
-                    {
-                        htmlOpenTag = $"<font color='{colorHex}'>";
-                        htmlCloseTag = "</font>";
-                    }
-                    break;
-            }
-            if (!string.IsNullOrEmpty(htmlOpenTag))
-            {
-                result.Append(htmlOpenTag);
-                tagStack.Push(htmlCloseTag);
+                return TryGetString(format, "url");
             }
         }
 
-        private static double ParseTimeToSeconds(string timeStr)
+        return null;
+    }
+
+    private static async Task<string?> DownloadSubtitleTextAsync(string url)
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromMinutes(2) };
+        var text = await client.GetStringAsync(url);
+        if (!text.TrimStart().StartsWith("#EXTM3U", StringComparison.OrdinalIgnoreCase))
         {
-            try
+            return text;
+        }
+
+        var baseUri = new Uri(url);
+        var builder = new StringBuilder();
+        foreach (var line in text.Split(["\r\n", "\n"], StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0 || trimmed.StartsWith("#", StringComparison.Ordinal))
             {
-                timeStr = timeStr.Trim().Replace(',', '.');
-                var parts = timeStr.Split('.');
-                var mainPart = parts[0];
-                double.TryParse(parts.Length > 1 ? parts[1].PadRight(3, '0').Substring(0, 3) : "0", out var ms);
-                var timeParts = mainPart.Split(':');
-                double totalSeconds = 0;
-                if (timeParts.Length == 3 && int.TryParse(timeParts[0], out int h) && int.TryParse(timeParts[1], out int m) && int.TryParse(timeParts[2], out int s))
-                    totalSeconds = h * 3600 + m * 60 + s;
-                else if (timeParts.Length == 2 && int.TryParse(timeParts[0], out m) && int.TryParse(timeParts[1], out s))
-                    totalSeconds = m * 60 + s;
-                else if (timeParts.Length == 1 && double.TryParse(timeParts[0], out var sec))
-                    totalSeconds = sec;
-                return totalSeconds + (ms / 1000.0);
+                continue;
             }
-            catch { return 0.0; }
+
+            var segment = await client.GetStringAsync(new Uri(baseUri, trimmed));
+            builder.AppendLine(segment);
         }
 
-        public void StartRealtimeSubtitles(List<SubtitleCue> cues)
+        return builder.Length == 0 ? null : builder.ToString();
+    }
+
+    private static string? TryGetString(JsonElement element, string name)
+    {
+        return element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
+
+    private void UpdateSubtitles()
+    {
+        if (_plugin is null || _currentSubtitles.Count == 0 || !Youtube.IsPlaying)
         {
-            if (_plugin == null || cues == null || cues.Count == 0) return;
-            StopRealtimeSubtitles();
-            _currentSubtitles = cues;
-            _audioProgressSec = 0.0;
-            _isAudioPlaying = true;
-            _subtitleTimer = _plugin.AddTimer(0.05f, UpdateSubtitles, TimerFlags.REPEAT);
-            _logger.LogInformation("[Subtitles] Started with {Count} cues. Correction Factor: {factor}", _currentSubtitles.Count, _driftCorrectionFactor);
+            return;
         }
 
-        public void StopRealtimeSubtitles()
+        var elapsed = _plugin.GetAudioPlaybackTime();
+        if (elapsed < 0)
         {
-            _subtitleTimer?.Kill();
-            _subtitleTimer = null;
-            _currentSubtitles.Clear();
-            _vttStyles.Clear();
+            return;
+        }
+
+        var activeCues = _currentSubtitles
+            .Where(cue => cue.StartTime <= elapsed && elapsed < cue.EndTime)
+            .ToList();
+
+        List<SubtitleCue> finalCues;
+        if (activeCues.Count > 0)
+        {
+            finalCues = activeCues
+                .GroupBy(cue => cue.LinePercent)
+                .Select(group => group.OrderByDescending(cue => cue.StartTime).First())
+                .OrderBy(cue => cue.LinePercent)
+                .ToList();
+            _lastShownCues = finalCues;
+        }
+        else if (_lastShownCues.Count > 0 && elapsed <= _lastShownCues.Max(cue => cue.EndTime) + LingerDuration)
+        {
+            finalCues = _lastShownCues;
+        }
+        else
+        {
+            finalCues = [];
             _lastShownCues.Clear();
-            _audioProgressSec = 0.0;
-            _isAudioPlaying = false;
-            
-            Server.NextFrame(() =>
-            {
-                foreach (var p in Utilities.GetPlayers()) 
-                    if(p != null && p.IsValid) 
-                        try { p.PrintToCenterHtml(""); } catch { } 
-            });
         }
 
-        private void UpdateSubtitles()
+        if (finalCues.Count == 0)
         {
-            Server.NextFrame(() =>
-            {
-                if (_plugin == null || _currentSubtitles.Count == 0 || !_isAudioPlaying) return;
-
-                // [수정됨] 경과 시간 계산 시 하드코딩된 보정 계수를 곱합니다.
-                var elapsedTime = Server.CurrentTime - _playbackStartTime;
-                _audioProgressSec = elapsedTime * _driftCorrectionFactor;
-
-                var futureTime = _audioProgressSec;
-                var activeCues = _currentSubtitles.Where(c => c.StartTime <= futureTime && futureTime < c.EndTime).ToList();
-
-                List<SubtitleCue> finalCuesToShow;
-                if (activeCues.Any())
-                {
-                    finalCuesToShow = activeCues
-                        .GroupBy(c => c.LinePercent)
-                        .Select(group => group.OrderByDescending(c => c.StartTime).First())
-                        .OrderBy(c => c.LinePercent)
-                        .ToList();
-                    _lastShownCues = finalCuesToShow;
-                }
-                else
-                {
-                    if (_lastShownCues.Any() && futureTime <= _lastShownCues.Max(c => c.EndTime) + LINGER_DURATION)
-                    {
-                        finalCuesToShow = _lastShownCues;
-                    }
-                    else
-                    {
-                        finalCuesToShow = new List<SubtitleCue>();
-                        _lastShownCues.Clear();
-                    }
-                }
-                
-                string innerHtml = finalCuesToShow.Any() ? string.Join("<br>", finalCuesToShow.Select(c => c.Text)) : "";
-                string newHtml = string.IsNullOrWhiteSpace(innerHtml) ? "" : $"<font size='5'>{innerHtml}</font>";
-
-                foreach (var p in Utilities.GetPlayers())
-                {
-                    if (p != null && p.IsValid)
-                    {
-                        try 
-                        { 
-                            p.PrintToCenterHtml(newHtml); 
-                        } 
-                        catch (Exception ex) 
-                        { 
-                            _logger.LogWarning(ex, "Error printing subtitle to player HUD."); 
-                        }
-                    }
-                }
-            });
+            return;
         }
 
-        public void Dispose()
+        var innerHtml = string.Join("<br>", finalCues.Select(cue => cue.Text));
+        _plugin.PrintSubtitleCenterHtml($"<font size='5'>{innerHtml}</font>");
+    }
+
+    private async Task<List<SubtitleCue>> ParseVttFile(string path)
+    {
+        var content = await File.ReadAllTextAsync(path, Encoding.UTF8);
+        return ParseVttContent(content);
+    }
+
+    private List<SubtitleCue> ParseVttContent(string content)
+    {
+        List<SubtitleCue> cues = [];
+        if (string.IsNullOrWhiteSpace(content))
         {
-            StopRealtimeSubtitles();
+            return cues;
+        }
+
+        ParseVttStyleBlock(content);
+        content = Regex.Replace(content, @"NOTE\s+.*?(?=\r?\n\r?\n)", "", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+
+        foreach (var block in Regex.Split(content, @"(?:\r?\n){2,}"))
+        {
             try
             {
-                if (_audioApiRegistered)
+                var cue = ParseSingleCue(block.Trim());
+                if (cue is not null)
                 {
-                    if (_playListenerId >= 0 && _playHandler != null) Audio.UnregisterPlayListener(_playHandler);
-                    if (_playStartListenerId >= 0 && _playStartHandler != null) Audio.UnregisterPlayStartListener(_playStartHandler);
-                    if (_playEndListenerId >= 0 && _playEndHandler != null) Audio.UnregisterPlayEndListener(_playEndHandler);
+                    cues.Add(cue);
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "[Subtitles] Error unregistering audio listeners.");
+                _logger.LogWarning(ex, "[Subtitles] Skipping malformed VTT cue.");
             }
         }
+
+        return cues.OrderBy(cue => cue.StartTime).ToList();
+    }
+
+    private SubtitleCue? ParseSingleCue(string block)
+    {
+        if (string.IsNullOrWhiteSpace(block) ||
+            block.StartsWith("WEBVTT", StringComparison.OrdinalIgnoreCase) ||
+            block.StartsWith("STYLE", StringComparison.OrdinalIgnoreCase) ||
+            block.StartsWith("Kind:", StringComparison.OrdinalIgnoreCase) ||
+            block.StartsWith("Language:", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var lines = block.Split(["\r\n", "\n"], StringSplitOptions.None);
+        var timeLineIndex = Array.FindIndex(lines, line => Regex.IsMatch(line, @"[\d:.]+\s*-->\s*[\d:.]+"));
+        if (timeLineIndex < 0)
+        {
+            return null;
+        }
+
+        var match = Regex.Match(lines[timeLineIndex].Trim(), @"^([\d:.,]+)\s*-->\s*([\d:.,]+)(.*)");
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var start = ParseTimeToSeconds(match.Groups[1].Value);
+        var end = ParseTimeToSeconds(match.Groups[2].Value);
+        if (end <= start)
+        {
+            return null;
+        }
+
+        var linePercent = 90;
+        var lineMatch = Regex.Match(match.Groups[3].Value, @"line:(-?\d+(?:\.\d+)?%?)");
+        if (lineMatch.Success &&
+            lineMatch.Groups[1].Value.EndsWith("%", StringComparison.Ordinal) &&
+            int.TryParse(lineMatch.Groups[1].Value.TrimEnd('%'), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedPercent))
+        {
+            linePercent = Math.Clamp(parsedPercent, 0, 100);
+        }
+
+        var rawText = string.Join(" ", lines.Skip(timeLineIndex + 1).Where(line => !string.IsNullOrWhiteSpace(line))).Trim();
+        if (rawText.Length == 0)
+        {
+            return null;
+        }
+
+        var html = ParseVttText(rawText);
+        return html.Length == 0 ? null : new SubtitleCue { StartTime = start, EndTime = end, Text = html, LinePercent = linePercent };
+    }
+
+    private void ParseVttStyleBlock(string content)
+    {
+        _vttStyles.Clear();
+        foreach (Match styleMatch in Regex.Matches(content, @"STYLE\s*([\s\S]*?)(?=\r?\n\r?\n|$)", RegexOptions.IgnoreCase))
+        {
+            ParseCssStyles(styleMatch.Groups[1].Value);
+        }
+    }
+
+    private void ParseCssStyles(string styleBlock)
+    {
+        foreach (Match rule in Regex.Matches(styleBlock, @"([^{]+)\s*\{\s*([^}]+)\s*\}", RegexOptions.IgnoreCase))
+        {
+            var colorMatch = Regex.Match(rule.Groups[2].Value, @"color:\s*([^;]+)", RegexOptions.IgnoreCase);
+            if (!colorMatch.Success)
+            {
+                continue;
+            }
+
+            var color = ParseColorValue(colorMatch.Groups[1].Value);
+            if (color.Length == 0)
+            {
+                continue;
+            }
+
+            foreach (Match classMatch in Regex.Matches(rule.Groups[1].Value, @"\.([a-zA-Z0-9_-]+)", RegexOptions.IgnoreCase))
+            {
+                _vttStyles[classMatch.Groups[1].Value] = color;
+                _vttStyles["c." + classMatch.Groups[1].Value] = color;
+            }
+        }
+    }
+
+    private string ParseColorValue(string value)
+    {
+        value = value.Trim().ToLowerInvariant();
+        if (Regex.IsMatch(value, "^#[0-9a-f]{3}([0-9a-f]{3})?$", RegexOptions.IgnoreCase))
+        {
+            return value;
+        }
+
+        var rgb = Regex.Match(value, @"rgba?\s*\((\d+),\s*(\d+),\s*(\d+)");
+        if (rgb.Success)
+        {
+            var r = Math.Clamp(int.Parse(rgb.Groups[1].Value, CultureInfo.InvariantCulture), 0, 255);
+            var g = Math.Clamp(int.Parse(rgb.Groups[2].Value, CultureInfo.InvariantCulture), 0, 255);
+            var b = Math.Clamp(int.Parse(rgb.Groups[3].Value, CultureInfo.InvariantCulture), 0, 255);
+            return $"#{r:X2}{g:X2}{b:X2}";
+        }
+
+        return _predefinedColors.TryGetValue(value, out var named) ? named : "";
+    }
+
+    private string ParseVttText(string text)
+    {
+        text = WebUtility.HtmlDecode(text.Replace("&nbsp;", " "));
+        var result = new StringBuilder();
+        var tagStack = new Stack<(string Name, string Close)>();
+        var i = 0;
+
+        while (i < text.Length)
+        {
+            if (text[i] != '<')
+            {
+                var nextTag = text.IndexOf('<', i);
+                if (nextTag < 0)
+                {
+                    nextTag = text.Length;
+                }
+
+                result.Append(WebUtility.HtmlEncode(text.Substring(i, nextTag - i)));
+                i = nextTag;
+                continue;
+            }
+
+            var tagEnd = text.IndexOf('>', i);
+            if (tagEnd < 0)
+            {
+                result.Append("&lt;");
+                i++;
+                continue;
+            }
+
+            var tagContent = text.Substring(i + 1, tagEnd - i - 1).Trim();
+            i = tagEnd + 1;
+
+            if (Regex.IsMatch(tagContent, @"^[\d:.]+$"))
+            {
+                continue;
+            }
+
+            if (tagContent.StartsWith("/", StringComparison.Ordinal))
+            {
+                var closeName = tagContent[1..]
+                    .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                    .FirstOrDefault()?
+                    .ToLowerInvariant();
+
+                if (closeName is not null &&
+                    tagStack.Count > 0 &&
+                    IsMatchingClose(tagStack.Peek().Name, closeName))
+                {
+                    result.Append(tagStack.Pop().Close);
+                }
+                continue;
+            }
+
+            ProcessOpenTag(tagContent, result, tagStack);
+        }
+
+        while (tagStack.Count > 0)
+        {
+            result.Append(tagStack.Pop().Close);
+        }
+
+        return Regex.Replace(result.ToString(), @"\s+", " ").Trim();
+    }
+
+    private void ProcessOpenTag(string tagContent, StringBuilder result, Stack<(string Name, string Close)> tagStack)
+    {
+        var tagName = tagContent.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.ToLowerInvariant();
+        if (string.IsNullOrEmpty(tagName))
+        {
+            return;
+        }
+
+        switch (tagName)
+        {
+            case "b":
+            case "i":
+            case "u":
+            case "s":
+                result.Append('<').Append(tagName).Append('>');
+                tagStack.Push((tagName, $"</{tagName}>"));
+                return;
+            case "v":
+                var voice = tagContent.Length > 1 ? tagContent[1..].Trim() : "";
+                if (voice.Length > 0)
+                {
+                    result.Append("<i>[")
+                        .Append(WebUtility.HtmlEncode(voice))
+                        .Append("]:</i> ");
+                }
+                return;
+            case "rt":
+                return;
+        }
+
+        var color = GetTagColor(tagName);
+        if (color.Length == 0)
+        {
+            return;
+        }
+
+        result.Append("<font color='").Append(color).Append("'>");
+        tagStack.Push((tagName, "</font>"));
+    }
+
+    private static bool IsMatchingClose(string openName, string closeName)
+        => openName.Equals(closeName, StringComparison.OrdinalIgnoreCase) ||
+           (closeName.Equals("c", StringComparison.OrdinalIgnoreCase) &&
+            openName.StartsWith("c.", StringComparison.OrdinalIgnoreCase));
+
+    private string GetTagColor(string tagName)
+    {
+        if (_vttStyles.TryGetValue(tagName, out var color) || _predefinedColors.TryGetValue(tagName, out color))
+        {
+            return color;
+        }
+
+        if (!tagName.StartsWith("c.", StringComparison.OrdinalIgnoreCase))
+        {
+            return "";
+        }
+
+        foreach (var part in tagName[2..].Split('.', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (_vttStyles.TryGetValue(part, out color) || _predefinedColors.TryGetValue(part, out color))
+            {
+                return color;
+            }
+        }
+
+        return "";
+    }
+
+    private static double ParseTimeToSeconds(string value)
+    {
+        value = value.Trim().Replace(',', '.');
+        var parts = value.Split('.');
+        var main = parts[0].Split(':');
+        var ms = parts.Length > 1 && double.TryParse(parts[1].PadRight(3, '0')[..3], NumberStyles.Number, CultureInfo.InvariantCulture, out var parsedMs)
+            ? parsedMs / 1000.0
+            : 0;
+
+        return main.Length switch
+        {
+            3 => int.Parse(main[0], CultureInfo.InvariantCulture) * 3600 +
+                 int.Parse(main[1], CultureInfo.InvariantCulture) * 60 +
+                 int.Parse(main[2], CultureInfo.InvariantCulture) + ms,
+            2 => int.Parse(main[0], CultureInfo.InvariantCulture) * 60 +
+                 int.Parse(main[1], CultureInfo.InvariantCulture) + ms,
+            1 => double.Parse(main[0], CultureInfo.InvariantCulture) + ms,
+            _ => 0
+        };
+    }
+
+    private static List<SubtitleCue> ShiftAndTrimCues(IEnumerable<SubtitleCue> cues, int startSec, int maxDuration)
+    {
+        var endSec = maxDuration > 0 ? startSec + maxDuration : double.MaxValue;
+        return cues
+            .Where(cue => cue.EndTime > startSec && cue.StartTime < endSec)
+            .Select(cue => new SubtitleCue
+            {
+                StartTime = Math.Max(0, cue.StartTime - startSec),
+                EndTime = Math.Max(0, Math.Min(cue.EndTime, endSec) - startSec),
+                Text = cue.Text,
+                LinePercent = cue.LinePercent
+            })
+            .Where(cue => cue.EndTime > cue.StartTime)
+            .ToList();
     }
 }
